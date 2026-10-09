@@ -1,0 +1,13 @@
+[package]
+name = "harpe"
+version = "0.1.0-alpha.1"
+edition = "2021"
+authors = ["Perseus Computing LLC <contact@perseuscomputing.com>"]
+description = "Deterministic context synthesis and token budgeting for cognitive AI agents."
+license = "MIT"
+repository = "https://github.com/Perseus-Computing-LLC/harpe"
+readme = "README.md"
+keywords = ["ai", "agents", "cognitive", "perseus"]
+categories = ["development-tools"]
+
+[dependencies]
