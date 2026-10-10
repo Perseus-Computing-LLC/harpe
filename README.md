@@ -24,7 +24,7 @@ Harpe solves this by enforcing hard token budgets before calling an LLM. It sort
 - **Microsecond speed:** Median pruning latency of 1.72 &micro;s across 128k context allocations adds zero noticeable overhead to agent turns.
 - **Predictable eviction:** Policies like `LowestPriority`, `Fifo`, `TruncateTail`, and `LeastRelevant` ensure prompt assembly is fully reproducible.
 - **Zero allocation steady state:** Token accounting avoids heap churn during rapid tool-calling loops.
-- **No network calls:** Pure Rust that runs entirely on your own machine.
+- **No network calls:** Runs fully offline on your own machine with zero cloud dependencies.
 
 ---
 
