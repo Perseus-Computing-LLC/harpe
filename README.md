@@ -1,30 +1,30 @@
 # harpe
 
-> Deterministic context synthesis and token budgeting for cognitive AI agents.
+> Deterministic context synthesis and token budgeting for AI agents.
 
 [![Crates.io](https://img.shields.io/crates/v/harpe.svg)](https://crates.io/crates/harpe)
 [![docs.rs](https://docs.rs/harpe/badge.svg)](https://docs.rs/harpe)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-informational.svg)](Cargo.toml)
 
-Part of the **Perseus Cognitive Infrastructure** suite by [Perseus Computing LLC](https://github.com/Perseus-Computing-LLC).
+Part of the **Perseus** suite by [Perseus Computing LLC](https://github.com/Perseus-Computing-LLC).
 
 ---
 
-## Overview
+## Why Harpe exists
 
-`harpe` provides sub-microsecond context window budgeting and deterministic token pruning for autonomous AI agents. In multi-turn and high-consequence agent loops, context bloat and arbitrary truncation introduce hallucination, dropped instructions, and runtime failures.
+In multi-turn agent runs, prompts grow until they hit model limits. When that happens, naive truncation usually lops off system rules, tool schemas, or early task context, causing the agent to hallucinate or stall.
 
-`harpe` enforces hard mathematical ceilings on token allocations prior to model inference invocation, scheduling context items deterministically according to strict priority rules.
+Harpe solves this by enforcing hard token budgets before calling an LLM. It sorts context items by priority and applies deterministic eviction rules so your agents never exceed token limits or drop critical instructions.
 
 ---
 
-## Architectural Invariants
+## Key design goals
 
-- **Sub-Microsecond Latency:** Median pruning latency of 1.72 &micro;s across 128k context allocations ensures budgeting operations add zero latency overhead.
-- **Deterministic Eviction:** Configurable deterministic policies (`Fifo`, `LowestPriority`, `TruncateTail`, `LeastRelevant`) guarantee reproducible prompt assembly across runs.
-- **Zero-Allocation Steady State:** Optimized token accounting algorithms avoid heap churn during high-frequency execution loops.
-- **Zero Remote Dependencies:** Pure Rust execution without external cloud dependencies, telemetry, or network calls.
+- **Microsecond speed:** Median pruning latency of 1.72 &micro;s across 128k context allocations adds zero noticeable overhead to agent turns.
+- **Predictable eviction:** Policies like `LowestPriority`, `Fifo`, `TruncateTail`, and `LeastRelevant` ensure prompt assembly is fully reproducible.
+- **Zero allocation steady state:** Token accounting avoids heap churn during rapid tool-calling loops.
+- **No network calls:** Pure Rust that runs entirely on your own machine.
 
 ---
 
@@ -37,7 +37,7 @@ Add `harpe` to your `Cargo.toml`:
 harpe = "0.1.0-alpha.1"
 ```
 
-Or via Cargo CLI:
+Or via Cargo:
 
 ```bash
 cargo add harpe
@@ -45,13 +45,13 @@ cargo add harpe
 
 ---
 
-## Usage Example
+## Example
 
 ```rust
 use harpe::{ContextBudgetEngine, ContextItem, PrunePolicy, TokenBudget};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Configure strict token budget bounds
+    // 1. Set budget boundaries
     let budget = TokenBudget {
         total_budget: 4096,
         reserved_completion: 1024,
@@ -61,14 +61,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(budget.available_context(), 2432);
 
-    // 2. Instantiate budget engine with priority pruning policy
+    // 2. Set up the engine to drop lower-priority items first
     let engine = ContextBudgetEngine::new(budget, PrunePolicy::LowestPriority);
 
-    // 3. Assemble candidate context items
+    // 3. Assemble candidate items with priorities
     let items = vec![
         ContextItem {
             id: "system_directive".to_string(),
-            content: "Operate as a verified mission control worker.".to_string(),
+            content: "You are a verification agent. Run all tests.".to_string(),
             token_count: 80,
             priority: 100,
             compressible: false,
@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
-    // 4. Synthesize bounded prompt payload
+    // 4. Synthesize prompt within budget
     let report = engine.synthesize(items)?;
 
     println!("Allocated Tokens: {}", report.allocated_tokens);
@@ -104,11 +104,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-## Empirical Benchmarks
+## Benchmark results
 
-Evaluated on bare-metal Linux x86_64 (`rustc 1.85.0`, `opt-level = 3`, `lto = "fat"`):
+Measured on bare-metal Linux x86_64 (`rustc 1.85.0`, `opt-level = 3`, `lto = "fat"`):
 
-| Metric | Measurement | Condition |
+| Metric | Measurement | Test condition |
 | :--- | :--- | :--- |
 | **p50 Pruning Latency** | **1.72 &micro;s** | 128k context ceiling |
 | **p95 Pruning Latency** | **4.88 &micro;s** | High contention allocation |
@@ -116,7 +116,7 @@ Evaluated on bare-metal Linux x86_64 (`rustc 1.85.0`, `opt-level = 3`, `lto = "f
 | **Ceiling Reduction** | **69.50%** | Multi-turn dynamic compression |
 | **Allocations / Cycle** | **0** | Steady state pre-allocated pool |
 
-Run benchmarks locally:
+Run benchmarks yourself:
 
 ```bash
 cargo run --release -p perseus-benchmarks
@@ -126,4 +126,4 @@ cargo run --release -p perseus-benchmarks
 
 ## License
 
-Clean-room implementation &copy; 2026 Perseus Computing LLC. Licensed under the permissive [MIT License](LICENSE).
+Copyright &copy; 2026 Perseus Computing LLC. Released under the [MIT License](LICENSE).
