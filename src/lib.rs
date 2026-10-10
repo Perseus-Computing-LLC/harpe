@@ -1,27 +1,89 @@
 //! # harpe
 //!
-//! Deterministic context synthesis and token budgeting for cognitive AI agents.
-//! Clean-room implementation © 2026 Perseus Computing LLC.
+//! Deterministic context synthesis and token budgeting for autonomous AI agents.
+//!
+//! Harpe provides deterministic, microsecond token budgeting and priority-based
+//! context trimming for agentic loops. When language models run multi-turn agent
+//! workflows, context windows can quickly exceed hardware or inference limits.
+//! Uncontrolled growth results in context truncation, lost system prompts, or
+//! excessive inference latency.
+//!
+//! Harpe solves this by calculating available context headroom, prioritizing
+//! pinned instructions, and pruning lower-priority context items before model
+//! invocation.
+//!
+//! ## Architecture Overview
+//!
+//! 1. **Token Accounting**: [`TokenBudget`] defines the maximum context envelope,
+//!    deducting reserved tokens for model output, tool specifications, and safety margin.
+//! 2. **Context Entities**: [`ContextItem`] represents individual context components
+//!    (system prompts, active tool outputs, conversation turns) tagged with numeric priorities.
+//! 3. **Synthesis Engine**: [`ContextBudgetEngine`] resolves token counts and applies
+//!    pruning strategies such as [`PrunePolicy::LowestPriority`] or [`PrunePolicy::Fifo`]
+//!    to produce an exact [`SynthesisReport`] fitting within the budget.
+//!
+//! ## Quick Start
+//!
+//! ```rust
+//! use harpe::{ContextBudgetEngine, ContextItem, ContextSynthesizer, PrunePolicy, TokenBudget};
+//!
+//! // Define a total context envelope of 4096 tokens, reserving 1024 for output and tools
+//! let mut budget = TokenBudget::new(4096);
+//! budget.reserved_completion = 512;
+//! budget.reserved_tools = 256;
+//! budget.safety_margin = 256;
+//!
+//! assert_eq!(budget.available_context(), 3072);
+//!
+//! // Prepare context items with explicit priorities (0 is pinned/highest priority)
+//! let system_prompt = ContextItem::new("sys", "You are an autonomous systems assistant.", 0);
+//! let conversation = ContextItem::new("hist", "Previous user query and reasoning traces.", 50);
+//! let scratchpad = ContextItem::new("scratch", "Temporary debug buffer with logs.", 90);
+//!
+//! let engine = ContextBudgetEngine::default();
+//! let report = engine.synthesize(
+//!     &[system_prompt, conversation, scratchpad],
+//!     &budget,
+//!     PrunePolicy::LowestPriority,
+//! ).expect("Synthesis should succeed");
+//!
+//! println!("Consumed tokens: {}", report.consumed_tokens);
+//! println!("Remaining tokens: {}", report.budget_remaining);
+//! ```
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Pruning policies supported by the context synthesis engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrunePolicy {
+    /// First-In First-Out: Prune older context items first based on `created_at` timestamp.
     Fifo,
+    /// Priority-based: Retain items with lower priority numbers first (0 = highest priority).
     LowestPriority,
+    /// Drop tail items that exceed available capacity in sequential order.
     TruncateTail,
+    /// Discard items considered least relevant to the current objective.
     LeastRelevant,
 }
 
+/// Token budget configuration for an agent invocation turn.
+///
+/// Tracks the total available model context window and subtracts necessary reserves
+/// for generation and tools to calculate safe available context headroom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenBudget {
+    /// Total token limit of the target model (for example, 8192 or 128000).
     pub total_budget: usize,
+    /// Tokens reserved strictly for the model response generation.
     pub reserved_completion: usize,
+    /// Tokens reserved for JSON schemas and tool definitions.
     pub reserved_tools: usize,
+    /// Safety headroom buffer to absorb tokenizer discrepancies.
     pub safety_margin: usize,
 }
 
 impl TokenBudget {
+    /// Create a new budget with the specified total token capacity.
     pub fn new(total_budget: usize) -> Self {
         Self {
             total_budget,
@@ -31,6 +93,7 @@ impl TokenBudget {
         }
     }
 
+    /// Calculate the usable context token capacity after all reserves are deducted.
     pub fn available_context(&self) -> usize {
         let reservations = self.reserved_completion + self.reserved_tools + self.safety_margin;
         if self.total_budget > reservations {
@@ -40,10 +103,12 @@ impl TokenBudget {
         }
     }
 
+    /// Returns true if the provided token usage exceeds available context capacity.
     pub fn is_exceeded(&self, used_tokens: usize) -> bool {
         used_tokens > self.available_context()
     }
 
+    /// Calculate context utilization percentage.
     pub fn utilization_pct(&self, used_tokens: usize) -> f64 {
         let avail = self.available_context();
         if avail == 0 {
@@ -54,18 +119,28 @@ impl TokenBudget {
     }
 }
 
+/// A discreet unit of context presented to the synthesis engine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContextItem {
+    /// Unique identifier for this context entry.
     pub id: String,
+    /// Logical role (for example: system, user, assistant, context).
     pub role: String,
+    /// Raw textual content.
     pub content: String,
+    /// Measured token count (computed dynamically if initialized as 0).
     pub token_count: usize,
-    pub priority: u8, // 0 = pinned/critical, 100 = discardable
+    /// Retention priority. Lower values indicate higher importance. Priority 0 is pinned.
+    pub priority: u8,
+    /// If true, this item will never be pruned regardless of budget pressure.
     pub pinned: bool,
+    /// Timestamp (UNIX epoch in seconds or fractional seconds) for FIFO ordering.
     pub created_at: f64,
 }
 
 impl ContextItem {
+    /// Create a new context item with an identifier, content, and priority.
+    /// Priority 0 automatically marks the item as pinned.
     pub fn new(id: impl Into<String>, content: impl Into<String>, priority: u8) -> Self {
         Self {
             id: id.into(),
@@ -79,32 +154,60 @@ impl ContextItem {
     }
 }
 
+/// Detailed outcome of a context synthesis execution.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SynthesisReport {
+    /// Context items selected to fit within the available budget.
     pub included_items: Vec<ContextItem>,
+    /// Context items pruned due to budget constraints.
     pub pruned_items: Vec<ContextItem>,
+    /// Total tokens consumed by included items.
     pub consumed_tokens: usize,
+    /// Unallocated tokens remaining in available context space.
     pub budget_remaining: usize,
+    /// Total tokens discarded across all pruned items.
     pub pruned_tokens: usize,
+    /// The pruning strategy that was applied during synthesis.
     pub policy_applied: PrunePolicy,
 }
 
+/// Errors returned during context synthesis and budgeting operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HarpeError {
+    /// Pinned items alone exceed the entire available context budget.
     BudgetOverflow(String),
+    /// Internal failure during context synthesis or pruning calculation.
     SynthesisFailed(String),
 }
 
+impl std::fmt::Display for HarpeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BudgetOverflow(msg) => write!(f, "Budget overflow: {}", msg),
+            Self::SynthesisFailed(msg) => write!(f, "Synthesis failed: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for HarpeError {}
+
+/// Trait for measuring token counts of text slices.
 pub trait TokenCounter: Send + Sync {
+    /// Return the measured or estimated token count for the given text.
     fn count_tokens(&self, text: &str) -> usize;
 }
 
+/// Hook for lifecycle interception before and after pruning runs.
 pub trait PruningHook: Send + Sync {
+    /// Invoked before candidate pruning begins.
     fn pre_prune(&self, items: &[ContextItem]);
+    /// Invoked after synthesis completes with the finalized report.
     fn post_prune(&self, report: &SynthesisReport);
 }
 
+/// Trait implemented by context synthesis engines.
 pub trait ContextSynthesizer: Send + Sync {
+    /// Synthesize and prune context items according to the supplied budget and policy.
     fn synthesize(
         &self,
         items: &[ContextItem],
@@ -113,6 +216,7 @@ pub trait ContextSynthesizer: Send + Sync {
     ) -> Result<SynthesisReport, HarpeError>;
 }
 
+/// Fast heuristic token counter estimating tokens via word and character ratios.
 #[derive(Debug, Default, Clone)]
 pub struct HeuristicTokenCounter;
 
@@ -128,6 +232,7 @@ impl TokenCounter for HeuristicTokenCounter {
     }
 }
 
+/// Primary context synthesis and budgeting engine.
 pub struct ContextBudgetEngine {
     counter: Box<dyn TokenCounter>,
 }
@@ -141,6 +246,7 @@ impl Default for ContextBudgetEngine {
 }
 
 impl ContextBudgetEngine {
+    /// Instantiate a budget engine with a custom token counter implementation.
     pub fn new(counter: Box<dyn TokenCounter>) -> Self {
         Self { counter }
     }

@@ -34,7 +34,7 @@ Add `harpe` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-harpe = "0.1.0-alpha.1"
+harpe = "0.1.0-alpha.2"
 ```
 
 Or via Cargo:
