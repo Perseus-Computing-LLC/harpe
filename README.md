@@ -108,18 +108,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Measured on bare-metal Linux x86_64 (`rustc 1.85.0`, `opt-level = 3`, `lto = "fat"`):
 
-| Metric | Measurement | Test condition |
-| :--- | :--- | :--- |
-| **p50 Pruning Latency** | **1.72 &micro;s** | 128k context ceiling |
-| **p95 Pruning Latency** | **4.88 &micro;s** | High contention allocation |
-| **p99 Pruning Latency** | **7.14 &micro;s** | Peak context window boundary |
-| **Ceiling Reduction** | **69.50%** | Multi-turn dynamic compression |
-| **Allocations / Cycle** | **0** | Steady state pre-allocated pool |
+| Metric | Measurement | Test condition | Operational Guarantee |
+| :--- | :--- | :--- | :--- |
+| **Small Context Assembly (p50)** | **1.76 &micro;s** | 10 items / 2k context ceiling | Sub-2 µs deterministic assembly |
+| **Large Context Assembly (p50)** | **35.74 &micro;s** | 200 items / 40k context ceiling | Hard ceiling priority knapsack pruning |
+| **100,000-Turn Production Curve** | **24.3 &micro;s / turn** | 100k sequential turns (`knapsack_cost_curve`) | 41,234 turns/s sustained throughput |
+| **Context Token Reduction** | **84.77%** | 504.5M unbudgeted vs 76.8M budgeted tokens | Net savings of $1,283.02 / 100k turns (Sonnet 3.5) |
+| **Budget Overruns** | **0 (0.00%)** | 100,000 evaluated turns | Zero overrun fail-closed ceiling guarantee |
+| **Tier 0 Tactical Payload** | **21.25 &micro;s** | 800 tokens -> 51 tokens (93.6% reduction) | 79 bytes binary / 132 bytes wire JSON |
 
 Run benchmarks yourself:
 
 ```bash
-cargo run --release -p perseus-benchmarks
+cargo run --release -p telarch-benchmarks
+cargo run --release -p telarch-benchmarks --bin knapsack_cost_curve
+cargo run --release -p telarch-benchmarks --bin restricted_payload_test
 ```
 
 ---
