@@ -37,6 +37,7 @@ class ContextSynthesizer(Protocol):
         items: Sequence[ContextItem],
         budget: TokenBudget,
         policy: PrunePolicy = PrunePolicy.LOWEST_PRIORITY,
+        destination: str = "remote",
     ) -> SynthesisReport:
         """Synthesize and prune context items to fit within the designated budget."""
         ...

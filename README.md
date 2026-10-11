@@ -104,6 +104,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
+## Python: keeping confidential items off the wire
+
+Mark an item `sensitivity="confidential"` and `synthesize(...)` leaves it out whenever the destination is `"remote"` (the default), even if the item is pinned. Withheld items cost no budget and are listed in `report.withheld_items`, so you can see what was held back. Pass `destination="local"` for a model that runs on your own hardware.
+
+```python
+from harpe import ContextBudgetEngine, ContextItem, TokenBudget
+
+engine = ContextBudgetEngine()
+items = [
+    ContextItem(id="rule", content="Answer in plain language.", pinned=True),
+    ContextItem(id="note", content="Internal-only detail.", sensitivity="confidential"),
+]
+report = engine.synthesize(items, TokenBudget(total_budget=1000))                      # note withheld
+local = engine.synthesize(items, TokenBudget(total_budget=1000), destination="local")  # note kept
+```
+
 ## Benchmark results
 
 Measured on bare-metal Linux x86_64 (`rustc 1.85.0`, `opt-level = 3`, `lto = "fat"`):

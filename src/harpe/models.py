@@ -50,6 +50,11 @@ class ContextItem(BaseModel):
     pinned: bool = Field(default=False, description="Whether this item is strictly immune to pruning.")
     created_at: float = Field(default_factory=time.time, description="Unix timestamp of item creation.")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary item metadata.")
+    sensitivity: str = Field(
+        default="normal",
+        pattern="^(normal|confidential)$",
+        description="'confidential' items are withheld whenever the destination is 'remote', even if pinned.",
+    )
 
 
 class SynthesisReport(BaseModel):
@@ -59,4 +64,8 @@ class SynthesisReport(BaseModel):
     consumed_tokens: int = Field(default=0, ge=0)
     budget_remaining: int = Field(default=0, ge=0)
     pruned_tokens: int = Field(default=0, ge=0)
+    withheld_items: List[ContextItem] = Field(
+        default_factory=list,
+        description="Confidential items kept out because the destination was remote. Not counted as pruned or consumed.",
+    )
     policy_applied: PrunePolicy = Field(default=PrunePolicy.LOWEST_PRIORITY)
