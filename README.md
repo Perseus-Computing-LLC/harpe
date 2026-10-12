@@ -126,10 +126,10 @@ Measured on bare-metal Linux x86_64 (`rustc 1.85.0`, `opt-level = 3`, `lto = "fa
 
 | Metric | Measurement | Test condition | Operational Guarantee |
 | :--- | :--- | :--- | :--- |
-| **Small Context Assembly (p50)** | **1.76 &micro;s** | 10 items / 2k context ceiling | Sub-2 µs deterministic assembly |
+| **Small Context Assembly (median)** | **2.3 &micro;s** | 10 items / 2k context ceiling (range 1.7–2.3 µs) | Deterministic assembly |
 | **Large Context Assembly (p50)** | **35.74 &micro;s** | 200 items / 40k context ceiling | Hard ceiling priority knapsack pruning |
-| **100,000-Turn Production Curve** | **24.3 &micro;s / turn** | 100k sequential turns (`knapsack_cost_curve`) | 41,234 turns/s sustained throughput |
-| **Context Token Reduction** | **84.77%** | 504.5M unbudgeted vs 76.8M budgeted tokens | Net savings of $1,283.02 / 100k turns (Sonnet 3.5) |
+| **100,000-Turn Production Curve** | **47 &micro;s / turn** | 100k sequential turns (`knapsack_cost_curve`) | ~21,000 turns/s sustained throughput |
+| **Context Token Reduction** | **78.3%** | 100,000 simulated turns (78.28% verified) | Zero overrun fail-closed ceiling guarantee |
 | **Budget Overruns** | **0 (0.00%)** | 100,000 evaluated turns | Zero overrun fail-closed ceiling guarantee |
 | **Tier 0 Tactical Payload** | **21.25 &micro;s** | 800 tokens -> 51 tokens (93.6% reduction) | 79 bytes binary / 132 bytes wire JSON |
 
