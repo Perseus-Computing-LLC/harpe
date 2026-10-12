@@ -48,7 +48,7 @@ cargo add harpe
 ## Example
 
 ```rust
-use harpe::{ContextBudgetEngine, ContextItem, PrunePolicy, TokenBudget};
+use harpe::{ContextBudgetEngine, ContextItem, ContextSynthesizer, PrunePolicy, TokenBudget};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Set budget boundaries
@@ -61,42 +61,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(budget.available_context(), 2432);
 
-    // 2. Set up the engine to drop lower-priority items first
-    let engine = ContextBudgetEngine::new(budget, PrunePolicy::LowestPriority);
+    // 2. Set up the engine with a token counter (or use default)
+    let engine = ContextBudgetEngine::default();
 
-    // 3. Assemble candidate items with priorities
+    // 3. Assemble candidate items with priorities (priority 0 is pinned)
     let items = vec![
-        ContextItem {
-            id: "system_directive".to_string(),
-            content: "You are a verification agent. Run all tests.".to_string(),
-            token_count: 80,
-            priority: 100,
-            compressible: false,
-        },
-        ContextItem {
-            id: "tool_output_1".to_string(),
-            content: "Execution trace: node 4 state reconciled.".to_string(),
-            token_count: 500,
-            priority: 50,
-            compressible: true,
-        },
-        ContextItem {
-            id: "historical_logs".to_string(),
-            content: "Verbose background data stream...".to_string(),
-            token_count: 2200,
-            priority: 10,
-            compressible: true,
-        },
+        ContextItem::new(
+            "system_directive",
+            "You are a verification agent. Run all tests.",
+            0,
+        ),
+        ContextItem::new(
+            "tool_output_1",
+            "Execution trace: node 4 state reconciled.",
+            50,
+        ),
+        ContextItem::new(
+            "historical_logs",
+            "Verbose background data stream...",
+            80,
+        ),
     ];
 
     // 4. Synthesize prompt within budget
-    let report = engine.synthesize(items)?;
+    let report = engine.synthesize(&items, &budget, PrunePolicy::LowestPriority)?;
 
-    println!("Allocated Tokens: {}", report.allocated_tokens);
-    println!("Retained Items:   {}", report.retained_items.len());
-    println!("Pruned Items:     {}", report.pruned_item_ids.len());
+    println!("Consumed Tokens: {}", report.consumed_tokens);
+    println!("Included Items:  {}", report.included_items.len());
+    println!("Pruned Items:    {}", report.pruned_items.len());
 
-    assert!(report.allocated_tokens <= budget.available_context());
+    assert!(report.consumed_tokens <= budget.available_context());
 
     Ok(())
 }
