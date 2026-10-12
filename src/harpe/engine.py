@@ -41,7 +41,16 @@ class ContextBudgetEngine(ContextSynthesizer):
         items: Sequence[ContextItem],
         budget: TokenBudget,
         policy: PrunePolicy = PrunePolicy.LOWEST_PRIORITY,
+        destination: str = "remote",
     ) -> SynthesisReport:
+        """``destination``: "remote" (default) withholds every item marked confidential, pinned or not, before any
+        budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything."""
+        if destination not in ("remote", "local"):
+            raise ValueError("destination must be 'remote' or 'local'")
+        withheld: List[ContextItem] = []
+        if destination == "remote":
+            withheld = [it for it in items if it.sensitivity == "confidential"]
+            items = [it for it in items if it.sensitivity != "confidential"]
         resolved_items: List[ContextItem] = []
         for it in items:
             tcount = it.token_count
@@ -72,6 +81,7 @@ class ContextBudgetEngine(ContextSynthesizer):
                 consumed_tokens=pinned_tokens,
                 budget_remaining=0,
                 pruned_tokens=sum(it.token_count for it in unpinned_items),
+                withheld_items=withheld,
                 policy_applied=policy,
             )
             for hook in self.hooks:
@@ -158,6 +168,7 @@ class ContextBudgetEngine(ContextSynthesizer):
             consumed_tokens=total_consumed,
             budget_remaining=max(0, available_capacity - total_consumed),
             pruned_tokens=total_pruned,
+            withheld_items=withheld,
             policy_applied=policy,
         )
 
