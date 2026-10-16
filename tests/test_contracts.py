@@ -70,6 +70,54 @@ class TestHarpeContracts(unittest.TestCase):
         self.assertIn("mid", included_ids)
         self.assertIn("old", pruned_ids)
 
+    def test_synthesis_truncate_tail_and_least_relevant(self):
+        budget = TokenBudget(total_budget=50)
+        items = [
+            ContextItem(id="first", content="First turn", priority=50, created_at=100.0, token_count=25),
+            ContextItem(id="second", content="Second turn", priority=50, created_at=200.0, token_count=25),
+            ContextItem(id="third", content="Third turn", priority=50, created_at=300.0, token_count=25),
+        ]
+        # TRUNCATE_TAIL preserves oldest items first and drops newest tail items
+        report_tail = self.engine.synthesize(items, budget, policy=PrunePolicy.TRUNCATE_TAIL)
+        self.assertEqual([it.id for it in report_tail.included_items], ["first", "second"])
+        self.assertEqual([it.id for it in report_tail.pruned_items], ["third"])
+
+        # LEAST_RELEVANT uses metadata["relevance"] and PruningHook lifecycle callbacks
+        hook_events = []
+
+        class CustomHook:
+            def pre_prune(self, items):
+                hook_events.append(("pre", len(items)))
+
+            def post_prune(self, report):
+                hook_events.append(("post", len(report.included_items)))
+
+        rel_items = [
+            ContextItem(id="first", content="First turn", priority=50, token_count=25, metadata={"relevance": 0.1}),
+            ContextItem(id="second", content="Second turn", priority=50, token_count=25, metadata={"relevance": 0.5}),
+            ContextItem(id="third", content="Third turn", priority=50, token_count=25, metadata={"relevance": 0.95}),
+        ]
+        hook_engine = ContextBudgetEngine(token_counter=self.counter, hooks=[CustomHook()])
+        report_rel = hook_engine.synthesize(rel_items, budget, policy=PrunePolicy.LEAST_RELEVANT)
+        self.assertEqual([it.id for it in report_rel.included_items], ["second", "third"])
+        self.assertEqual(report_rel.consumed_tokens, 50)
+        self.assertEqual(hook_events, [("pre", 3), ("post", 2)])
+
+    def test_budget_validation_edge_cases(self):
+        with self.assertRaises(ValueError):
+            TokenBudget(total_budget=0)
+        with self.assertRaises(ValueError):
+            TokenBudget(total_budget=100, reserved_completion=-1)
+
+        over_reserved = TokenBudget(
+            total_budget=100,
+            reserved_completion=60,
+            reserved_tools=50,
+        )
+        self.assertEqual(over_reserved.available_context, 0)
+        self.assertEqual(over_reserved.utilization_pct(10), 100.0)
+        self.assertTrue(over_reserved.is_exceeded(1))
+
 
 if __name__ == "__main__":
     unittest.main()

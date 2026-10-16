@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "harpe"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Deterministic context synthesis and token budgeting for cognitive AI agents."
 readme = "README.md"
 authors = [
@@ -27,3 +27,9 @@ dependencies = ["pydantic>=2"]
 [project.urls]
 Homepage = "https://github.com/Perseus-Computing-LLC/harpe"
 Repository = "https://github.com/Perseus-Computing-LLC/harpe"
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["src"]
+testpaths = ["tests"]
+

@@ -1,6 +1,6 @@
 [package]
 name = "harpe"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 edition = "2021"
 authors = ["Perseus Computing LLC <contact@perseuscomputing.com>"]
 description = "Deterministic context synthesis and token budgeting for cognitive AI agents."
