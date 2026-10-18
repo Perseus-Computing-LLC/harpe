@@ -21,9 +21,9 @@ Harpe solves this by enforcing hard token budgets before calling an LLM. It sort
 
 ## Key design goals
 
-- **Microsecond speed:** Median pruning latency of 1.72 &micro;s across 128k context allocations adds zero noticeable overhead to agent turns.
+- **Microsecond speed:** Assembling a 10-item context takes a median of 1.88 &micro;s; 200 items take 41.16 &micro;s (see [Benchmark results](#benchmark-results)).
 - **Predictable eviction:** Policies like `LowestPriority`, `Fifo`, `TruncateTail`, and `LeastRelevant` ensure prompt assembly is fully reproducible.
-- **Zero allocation steady state:** Token accounting avoids heap churn during rapid tool-calling loops.
+- **Hard ceiling:** The assembled context never exceeds the available budget; if pinned items alone do not fit, `synthesize` returns an error. In 100,000 simulated turns, 0 went over.
 - **No network calls:** Runs fully offline on your own machine with zero cloud dependencies.
 
 ---
@@ -116,16 +116,16 @@ local = engine.synthesize(items, TokenBudget(total_budget=1000), destination="lo
 
 ## Benchmark results
 
-Measured on bare-metal Linux x86_64 (`rustc 1.85.0`, `opt-level = 3`, `lto = "fat"`):
+Measured with the [`telarch-benchmarks`](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) suite on bare-metal Linux x86_64 (Intel Core i5-13500, runs pinned to the performance cores, `rustc 1.97.1`, default release profile). The figures come from that repository's committed reports.
 
 | Metric | Measurement | Test condition | Operational Guarantee |
 | :--- | :--- | :--- | :--- |
-| **Small Context Assembly (median)** | **2.3 &micro;s** | 10 items / 2k context ceiling (range 1.7–2.3 µs) | Deterministic assembly |
-| **Large Context Assembly (p50)** | **35.74 &micro;s** | 200 items / 40k context ceiling | Hard ceiling priority knapsack pruning |
-| **100,000-Turn Production Curve** | **47 &micro;s / turn** | 100k sequential turns (`knapsack_cost_curve`) | ~21,000 turns/s sustained throughput |
-| **Context Token Reduction** | **78.3%** | 100,000 simulated turns (78.28% verified) | Zero overrun fail-closed ceiling guarantee |
-| **Budget Overruns** | **0 (0.00%)** | 100,000 evaluated turns | Zero overrun fail-closed ceiling guarantee |
-| **Tier 0 Tactical Payload** | **21.25 &micro;s** | 800 tokens -> 51 tokens (93.6% reduction) | 79 bytes binary / 132 bytes wire JSON |
+| **Small Context Assembly (p50)** | **1.88 &micro;s** | 10 items, 60-token budget, 2,000 iterations (p95 2.36 &micro;s, p99 3.16 &micro;s) | Deterministic assembly |
+| **Large Context Assembly (p50)** | **41.16 &micro;s** | 200 items, 1,500-token budget, 500 iterations | Priority-ordered greedy selection under a hard ceiling |
+| **100,000-Turn Production Curve** | **46.9 &micro;s / turn** | 100,000 sequential turns, 1,200-token ceiling (`knapsack_cost_curve`) | ~21,300 turns/s sustained throughput |
+| **Context Token Reduction** | **78.28%** | 100,000 simulated turns against unbudgeted accumulation of the same items | Every turn stays under the ceiling |
+| **Budget Overruns** | **0 (0.00%)** | 100,000 evaluated turns | Fail-closed ceiling |
+| **Tier 0 Tactical Payload** | **20.33 &micro;s** | 800 tokens to 51 tokens (93.6% reduction), 60-token ceiling (`restricted_payload_test`) | 79 bytes binary / 132 bytes wire JSON |
 
 Run benchmarks yourself:
 
