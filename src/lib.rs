@@ -96,11 +96,7 @@ impl TokenBudget {
     /// Calculate the usable context token capacity after all reserves are deducted.
     pub fn available_context(&self) -> usize {
         let reservations = self.reserved_completion + self.reserved_tools + self.safety_margin;
-        if self.total_budget > reservations {
-            self.total_budget - reservations
-        } else {
-            0
-        }
+        self.total_budget.saturating_sub(reservations)
     }
 
     /// Returns true if the provided token usage exceeds available context capacity.
@@ -227,7 +223,7 @@ impl TokenCounter for HeuristicTokenCounter {
         }
         let words = text.split_whitespace().count();
         let chars = text.chars().count();
-        let char_estimate = (chars + 3) / 4;
+        let char_estimate = chars.div_ceil(4);
         std::cmp::max(words, char_estimate)
     }
 }
@@ -301,7 +297,7 @@ impl ContextSynthesizer for ContextBudgetEngine {
         match policy {
             PrunePolicy::LowestPriority => {
                 let mut sorted = unpinned;
-                sorted.sort_by(|a, b| a.priority.cmp(&b.priority));
+                sorted.sort_by_key(|a| a.priority);
                 for it in sorted {
                     if it.token_count <= remaining {
                         remaining -= it.token_count;

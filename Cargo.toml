@@ -2,9 +2,12 @@
 name = "harpe"
 version = "0.1.0-alpha.3"
 edition = "2021"
+rust-version = "1.85"
 authors = ["Perseus Computing LLC <contact@perseuscomputing.com>"]
 description = "Deterministic context synthesis and token budgeting for cognitive AI agents."
 license = "MIT"
+homepage = "https://telarch.ai/harpe"
+documentation = "https://docs.rs/harpe"
 repository = "https://github.com/Perseus-Computing-LLC/harpe"
 readme = "README.md"
 keywords = ["ai", "agents", "cognitive", "telarch"]
