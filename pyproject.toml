@@ -25,7 +25,8 @@ requires-python = ">=3.11"
 dependencies = ["pydantic>=2"]
 
 [project.urls]
-Homepage = "https://github.com/Perseus-Computing-LLC/harpe"
+Homepage = "https://telarch.ai/harpe"
+Documentation = "https://docs.rs/harpe"
 Repository = "https://github.com/Perseus-Computing-LLC/harpe"
 
 [tool.pytest.ini_options]

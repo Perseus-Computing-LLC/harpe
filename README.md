@@ -1,142 +1,105 @@
-# harpe
+# Harpe
 
-> Deterministic context synthesis and token budgeting for AI agents.
+> Deterministic context synthesis and token budgeting for cognitive AI agents.
 
 [![Crates.io](https://img.shields.io/crates/v/harpe.svg)](https://crates.io/crates/harpe)
+[![PyPI](https://img.shields.io/pypi/v/harpe.svg)](https://pypi.org/project/harpe/)
 [![docs.rs](https://docs.rs/harpe/badge.svg)](https://docs.rs/harpe)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![MSRV](https://img.shields.io/badge/MSRV-1.85-informational.svg)](Cargo.toml)
+[![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-informational.svg)](Cargo.toml)
 
-Part of the **Telarch Suite** (TCI / Telarch Cognitive Infrastructure) by [Perseus Computing LLC](https://github.com/Perseus-Computing-LLC).
+Part of the **Telarch Suite** by [Perseus Computing LLC](https://perseuscomputing.com).
 
----
+## What it does
 
-## Why Harpe exists
-
-In multi-turn agent runs, prompts grow until they hit model limits. When that happens, naive truncation usually lops off system rules, tool schemas, or early task context, causing the agent to hallucinate or stall.
-
-Harpe solves this by enforcing hard token budgets before calling an LLM. It sorts context items by priority and applies deterministic eviction rules so your agents never exceed token limits or drop critical instructions.
-
----
-
-## Key design goals
-
-- **Microsecond speed:** Assembling a 10-item context takes a median of 1.88 &micro;s; 200 items take 41.16 &micro;s (see [Benchmark results](#benchmark-results)).
-- **Predictable eviction:** Policies like `LowestPriority`, `Fifo`, `TruncateTail`, and `LeastRelevant` ensure prompt assembly is fully reproducible.
-- **Hard ceiling:** The assembled context never exceeds the available budget; if pinned items alone do not fit, `synthesize` returns an error. In 100,000 simulated turns, 0 went over.
-- **No network calls:** Runs fully offline on your own machine with zero cloud dependencies.
-
----
+In multi-turn agent runs, prompt context grows until it exceeds model limits. Harpe selects which items go into each model call and keeps the total under a strict token ceiling:
+- **Priority-ordered greedy selection:** Evaluates items by priority number while total tokens fit within the budget ceiling.
+- **Pinned items always stay:** Priority 0 items (or items marked pinned) are never dropped.
+- **Deterministic output:** Identical input items and ceiling yield identical token selections every time.
+- **Zero network code:** Operates purely in-memory on your own hardware without external calls or telemetry.
 
 ## Installation
 
-Add `harpe` to your `Cargo.toml`:
+### Rust
+
+Add `harpe` to `Cargo.toml`:
 
 ```toml
 [dependencies]
-harpe = "0.1.0-alpha.2"
+harpe = "0.1.0-alpha.3"
 ```
 
-Or via Cargo:
+### Python
+
+Install via pip:
 
 ```bash
-cargo add harpe
+pip install harpe
 ```
 
----
+## Quickstart
 
-## Example
+### Rust (10 lines)
 
 ```rust
 use harpe::{ContextBudgetEngine, ContextItem, ContextSynthesizer, PrunePolicy, TokenBudget};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Set budget boundaries
-    let budget = TokenBudget {
-        total_budget: 4096,
-        reserved_completion: 1024,
-        reserved_tools: 512,
-        safety_margin: 128,
-    };
-
-    assert_eq!(budget.available_context(), 2432);
-
-    // 2. Set up the engine with a token counter (or use default)
-    let engine = ContextBudgetEngine::default();
-
-    // 3. Assemble candidate items with priorities (priority 0 is pinned)
-    let items = vec![
-        ContextItem::new(
-            "system_directive",
-            "You are a verification agent. Run all tests.",
-            0,
-        ),
-        ContextItem::new(
-            "tool_output_1",
-            "Execution trace: node 4 state reconciled.",
-            50,
-        ),
-        ContextItem::new(
-            "historical_logs",
-            "Verbose background data stream...",
-            80,
-        ),
+    let budget = TokenBudget::new(2048);
+    let items = [
+        ContextItem::new("sys", "You are an autonomous engineering agent.", 0),
+        ContextItem::new("obs", "Memory trace step 42: state normal.", 10),
     ];
-
-    // 4. Synthesize prompt within budget
-    let report = engine.synthesize(&items, &budget, PrunePolicy::LowestPriority)?;
-
-    println!("Consumed Tokens: {}", report.consumed_tokens);
-    println!("Included Items:  {}", report.included_items.len());
-    println!("Pruned Items:    {}", report.pruned_items.len());
-
-    assert!(report.consumed_tokens <= budget.available_context());
-
+    let report = ContextBudgetEngine::default().synthesize(&items, &budget, PrunePolicy::LowestPriority)?;
+    println!("Tokens: {} / {} (pruned: {})", report.consumed_tokens, budget.available_context(), report.pruned_items.len());
     Ok(())
 }
 ```
 
----
-
-## Python: keeping confidential items off the wire
-
-Mark an item `sensitivity="confidential"` and `synthesize(...)` leaves it out whenever the destination is `"remote"` (the default), even if the item is pinned. Withheld items cost no budget and are listed in `report.withheld_items`, so you can see what was held back. Pass `destination="local"` for a model that runs on your own hardware.
+### Python (10 lines)
 
 ```python
-from harpe import ContextBudgetEngine, ContextItem, TokenBudget
+from harpe import ContextBudgetEngine, ContextItem, TokenBudget, PrunePolicy
 
-engine = ContextBudgetEngine()
+budget = TokenBudget(total_budget=2048)
 items = [
-    ContextItem(id="rule", content="Answer in plain language.", pinned=True),
-    ContextItem(id="note", content="Internal-only detail.", sensitivity="confidential"),
+    ContextItem(id="sys", content="You are an autonomous engineering agent.", priority=0, pinned=True),
+    ContextItem(id="obs", content="Memory trace step 42: state normal.", priority=10),
 ]
-report = engine.synthesize(items, TokenBudget(total_budget=1000))                      # note withheld
-local = engine.synthesize(items, TokenBudget(total_budget=1000), destination="local")  # note kept
+report = ContextBudgetEngine().synthesize(items, budget, PrunePolicy.LOWEST_PRIORITY)
+print(f"Tokens: {report.consumed_tokens} / {budget.available_context} (pruned: {len(report.pruned_items)})")
 ```
 
-## Benchmark results
+## What we measured
 
-Measured with the [`telarch-benchmarks`](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) suite on bare-metal Linux x86_64 (Intel Core i5-13500, runs pinned to the performance cores, `rustc 1.97.1`, default release profile). The figures come from that repository's committed reports.
+Figures trace to reports committed in [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) (Linux x86_64, Intel Core i5-13500, `rustc 1.97.1`):
 
-| Metric | Measurement | Test condition | Operational Guarantee |
-| :--- | :--- | :--- | :--- |
-| **Small Context Assembly (p50)** | **1.88 &micro;s** | 10 items, 60-token budget, 2,000 iterations (p95 2.36 &micro;s, p99 3.16 &micro;s) | Deterministic assembly |
-| **Large Context Assembly (p50)** | **41.16 &micro;s** | 200 items, 1,500-token budget, 500 iterations | Priority-ordered greedy selection under a hard ceiling |
-| **100,000-Turn Production Curve** | **46.9 &micro;s / turn** | 100,000 sequential turns, 1,200-token ceiling (`knapsack_cost_curve`) | ~21,300 turns/s sustained throughput |
-| **Context Token Reduction** | **78.28%** | 100,000 simulated turns against unbudgeted accumulation of the same items | Every turn stays under the ceiling |
-| **Budget Overruns** | **0 (0.00%)** | 100,000 evaluated turns | Fail-closed ceiling |
-| **Tier 0 Tactical Payload** | **20.33 &micro;s** | 800 tokens to 51 tokens (93.6% reduction), 60-token ceiling (`restricted_payload_test`) | 79 bytes binary / 132 bytes wire JSON |
+| Metric | Result | Range | Scope | Method |
+|---|---|---|---|---|
+| **Small Context Latency (p50)** | **1.88 µs** | 1.69–2.30 µs | 10 items, 60-token ceiling | `telarch-benchmarks` |
+| **Large Context Latency (p50)** | **41.16 µs** | 37.68–43.51 µs | 200 items, 1,500-token ceiling | `telarch-benchmarks` |
+| **Context Reduction Ratio** | **69.51%** | 69.51% | 200 items against 1,500 ceiling | `telarch-benchmarks` |
+| **100,000-Turn Production Curve** | **46.90 µs/turn** | 44.6–49.6 µs | 100,000 simulated agent turns | `knapsack_cost_curve` |
+| **Turn Token Reduction** | **78.28%** | 78.28% | 100,000 turns, 1,200 ceiling | `knapsack_cost_curve` |
+| **Ceiling Overruns** | **0 turns** | 0 turns | 100,000 turns, 1,200 ceiling | `knapsack_cost_curve` |
+| **Fact Retention Accuracy** | **100.0%** | 100.0% | 50 tasks over 3 seeds (400 ceiling) | `gap1_harpe_quality` |
+| **LLM Turn Latency Share** | **0.00038%** | - | Share of 500 ms LLM invocation | `gap2_harpe_alternatives` |
 
-Run benchmarks yourself:
+## Limits
 
-```bash
-cargo run --release -p telarch-benchmarks
-cargo run --release -p telarch-benchmarks --bin knapsack_cost_curve
-cargo run --release -p telarch-benchmarks --bin restricted_payload_test
-```
+- **Alpha release:** APIs and structures are subject to change before 1.0.
+- **Not an optimal 0/1 knapsack solver:** Harpe uses priority-ordered greedy selection, not dynamic programming or integer linear programming.
+- **Allocations:** Harpe allocates context items and report structures during synthesis.
+- **Local token heuristic:** The default counter approximates token counts using whitespace and character length heuristics. When exact token bounds are required with downstream providers, pass a tokenizer-specific counter.
+- **Not independently assessed:** Designed for local and disconnected use.
 
----
+## Links
+
+- [Documentation (docs.rs)](https://docs.rs/harpe)
+- [Evidence & Claims](https://telarch.ai/evidence)
+- [Security Policy](https://github.com/Perseus-Computing-LLC/.github/blob/main/SECURITY.md)
+- [Telarch Overview](https://telarch.ai)
 
 ## License
 
-Copyright &copy; 2026 Perseus Computing LLC. Released under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE) © 2026 Perseus Computing LLC.

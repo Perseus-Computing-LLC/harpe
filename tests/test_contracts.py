@@ -103,6 +103,25 @@ class TestHarpeContracts(unittest.TestCase):
         self.assertEqual(report_rel.consumed_tokens, 50)
         self.assertEqual(hook_events, [("pre", 3), ("post", 2)])
 
+    def test_synthesis_warm_prefix_pruning(self):
+        budget = TokenBudget(total_budget=50)
+        items = [
+            ContextItem(id="prefix1", content="Prompt prefix instructions", priority=50, created_at=100.0, token_count=20),
+            ContextItem(id="mid1", content="Intermediate scratch search", priority=50, created_at=200.0, token_count=20),
+            ContextItem(id="mid2", content="Intermediate compile error", priority=50, created_at=300.0, token_count=20),
+            ContextItem(id="tail1", content="Latest user query turn", priority=50, created_at=400.0, token_count=20),
+        ]
+        # Total tokens = 80, budget = 50. WARM_PREFIX keeps prefix1 (20) and tail1 (20), pruning mid1 & mid2
+        report = self.engine.synthesize(items, budget, policy=PrunePolicy.WARM_PREFIX)
+        included_ids = [it.id for it in report.included_items]
+        pruned_ids = [it.id for it in report.pruned_items]
+
+        self.assertIn("prefix1", included_ids)
+        self.assertIn("tail1", included_ids)
+        self.assertIn("mid1", pruned_ids)
+        self.assertIn("mid2", pruned_ids)
+        self.assertEqual(report.consumed_tokens, 40)
+
     def test_budget_validation_edge_cases(self):
         with self.assertRaises(ValueError):
             TokenBudget(total_budget=0)
