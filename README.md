@@ -22,17 +22,19 @@ In multi-turn agent runs, prompt context grows until it no longer fits. Harpe ch
 
 ## Installation
 
+crates.io and PyPI have 0.1.0-alpha.2 (0.1.0a2 on PyPI). This README describes 0.1.0-alpha.4, which is not published yet. Until it is, install from this repository.
+
 ### Rust
 
 ```toml
 [dependencies]
-harpe = "0.1.0-alpha.4"
+harpe = { git = "https://github.com/Perseus-Computing-LLC/harpe", branch = "main" }
 ```
 
 ### Python
 
 ```bash
-pip install harpe
+pip install "harpe @ git+https://github.com/Perseus-Computing-LLC/harpe@main"
 ```
 
 ## Quickstart
