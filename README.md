@@ -24,17 +24,17 @@ Agents collect instructions, memory, documents and tool output faster than a mod
 
 ## Install
 
-crates.io and PyPI have 0.1.0-alpha.2 (0.1.0a2 on PyPI). This README describes 0.1.0-alpha.4, which is not published yet. Until it is, install from this repository.
+This README describes 0.1.0-alpha.4 (0.1.0a4 on PyPI). It is a pre-release, so name the version.
 
 ```toml
 # Rust: Cargo.toml
 [dependencies]
-harpe = { git = "https://github.com/Perseus-Computing-LLC/harpe", branch = "main" }
+harpe = "0.1.0-alpha.4"
 ```
 
 ```bash
 # Python
-pip install "harpe @ git+https://github.com/Perseus-Computing-LLC/harpe@main"
+pip install harpe==0.1.0a4
 ```
 
 ## Quickstart
