@@ -24,17 +24,17 @@ Agents collect instructions, memory, documents and tool output faster than a mod
 
 ## Install
 
-This README describes 0.1.0-alpha.4, tagged with a [GitHub release](https://github.com/Perseus-Computing-LLC/harpe/releases/tag/v0.1.0-alpha.4). crates.io and PyPI still have 0.1.0-alpha.2 (0.1.0a2 on PyPI), so install 0.1.0-alpha.4 from GitHub.
+This README describes 0.1.0-alpha.4 (0.1.0a4 on PyPI). It is a pre-release, so name the version.
 
 ```toml
 # Rust: Cargo.toml
 [dependencies]
-harpe = { git = "https://github.com/Perseus-Computing-LLC/harpe", tag = "v0.1.0-alpha.4" }
+harpe = "0.1.0-alpha.4"
 ```
 
 ```bash
 # Python
-pip install "harpe @ git+https://github.com/Perseus-Computing-LLC/harpe@v0.1.0-alpha.4"
+pip install harpe==0.1.0a4
 ```
 
 ## Quickstart
