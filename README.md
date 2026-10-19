@@ -1,6 +1,6 @@
 # Harpe
 
-**Fit every model call inside a token budget.** Harpe chooses which context items go into each call: pinned items always, then the rest by priority or recency while they fit. It reports exactly what it kept and what it dropped, and the same input gives the same result.
+**Choose what goes into each model call, under a token budget.** Harpe picks which context items go into each call: pinned items always, then the rest by priority or recency while they fit. It reports exactly what it kept and what it dropped, and the same input gives the same result.
 
 [![CI](https://github.com/Perseus-Computing-LLC/harpe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Perseus-Computing-LLC/harpe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
