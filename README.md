@@ -1,6 +1,6 @@
 # Harpe
 
-> Deterministic context synthesis and token budgeting for cognitive AI agents.
+> Context packing under a token budget for AI agents.
 
 [![Crates.io](https://img.shields.io/crates/v/harpe.svg)](https://crates.io/crates/harpe)
 [![PyPI](https://img.shields.io/pypi/v/harpe.svg)](https://pypi.org/project/harpe/)
@@ -12,26 +12,24 @@ Part of the **Telarch Suite** by [Perseus Computing LLC](https://perseuscomputin
 
 ## What it does
 
-In multi-turn agent runs, prompt context grows until it exceeds model limits. Harpe selects which items go into each model call and keeps the total under a strict token ceiling:
-- **Priority-ordered greedy selection:** Evaluates items by priority number while total tokens fit within the budget ceiling.
-- **Pinned items always stay:** Priority 0 items (or items marked pinned) are never dropped.
-- **Deterministic output:** Identical input items and ceiling yield identical token selections every time.
-- **Zero network code:** Operates purely in-memory on your own hardware without external calls or telemetry.
+In multi-turn agent runs, prompt context grows until it no longer fits. Harpe chooses which items go into each model call so the total stays inside a token budget:
+
+- **Pinned items stay.** Items that are pinned or at priority 0 (and, in Python, items of the invariant dimension) are always included. If they alone exceed the budget, nothing else is added and the report shows the overrun (`synthesize` in `src/harpe/engine.py` and `src/lib.rs`).
+- **Greedy by priority by default.** `PrunePolicy.LOWEST_PRIORITY` sorts the other items by priority (lower number first; in Python, newer first among equals) and adds each one that still fits. Other policies order items by age, input order or a relevance score; the Python engine also has a dynamic-programming selection over a per-item utility score (`KNAPSACK_DP`).
+- **Confidential items withheld.** With the default `destination="remote"`, the Python engine drops every item marked confidential before budgeting, so it never takes a slot or reaches the output (`src/harpe/engine.py`).
+- **Deterministic by default.** With the default policy, the same items and budget give the same selection.
+- **No network code.** Selection runs in memory and makes no network calls.
 
 ## Installation
 
 ### Rust
 
-Add `harpe` to `Cargo.toml`:
-
 ```toml
 [dependencies]
-harpe = "0.1.0-alpha.3"
+harpe = "0.1.0-alpha.4"
 ```
 
 ### Python
-
-Install via pip:
 
 ```bash
 pip install harpe
@@ -39,7 +37,7 @@ pip install harpe
 
 ## Quickstart
 
-### Rust (10 lines)
+### Rust
 
 ```rust
 use harpe::{ContextBudgetEngine, ContextItem, ContextSynthesizer, PrunePolicy, TokenBudget};
@@ -56,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Python (10 lines)
+### Python
 
 ```python
 from harpe import ContextBudgetEngine, ContextItem, TokenBudget, PrunePolicy
@@ -70,33 +68,23 @@ report = ContextBudgetEngine().synthesize(items, budget, PrunePolicy.LOWEST_PRIO
 print(f"Tokens: {report.consumed_tokens} / {budget.available_context} (pruned: {len(report.pruned_items)})")
 ```
 
-## What we measured
+## Measurements
 
-Figures trace to reports committed in [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) (Linux x86_64, Intel Core i5-13500, `rustc 1.97.1`):
-
-| Metric | Result | Range | Scope | Method |
-|---|---|---|---|---|
-| **Small Context Latency (p50)** | **1.88 µs** | 1.69–2.30 µs | 10 items, 60-token ceiling | `telarch-benchmarks` |
-| **Large Context Latency (p50)** | **41.16 µs** | 37.68–43.51 µs | 200 items, 1,500-token ceiling | `telarch-benchmarks` |
-| **Context Reduction Ratio** | **69.51%** | 69.51% | 200 items against 1,500 ceiling | `telarch-benchmarks` |
-| **100,000-Turn Production Curve** | **46.90 µs/turn** | 44.6–49.6 µs | 100,000 simulated agent turns | `knapsack_cost_curve` |
-| **Turn Token Reduction** | **78.28%** | 78.28% | 100,000 turns, 1,200 ceiling | `knapsack_cost_curve` |
-| **Ceiling Overruns** | **0 turns** | 0 turns | 100,000 turns, 1,200 ceiling | `knapsack_cost_curve` |
-| **Fact Retention Accuracy** | **100.0%** | 100.0% | 50 tasks over 3 seeds (400 ceiling) | `gap1_harpe_quality` |
-| **LLM Turn Latency Share** | **0.00038%** | - | Share of 500 ms LLM invocation | `gap2_harpe_alternatives` |
+Benchmark reports, with hardware and method, are kept in [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) rather than repeated here.
 
 ## Limits
 
 - **Alpha release:** APIs and structures are subject to change before 1.0.
-- **Not an optimal 0/1 knapsack solver:** Harpe uses priority-ordered greedy selection, not dynamic programming or integer linear programming.
+- **Greedy is not best-fit:** The default policy can leave room that a different combination of items would fill.
+- **Pinned overrun:** Pinned items are kept even when they exceed the budget.
+- **Time-dependent policies:** `KNAPSACK_DP` and `DUO_ATTENTION` score items by age against the current time, so their selection can change as time passes.
 - **Allocations:** Harpe allocates context items and report structures during synthesis.
-- **Local token heuristic:** The default counter approximates token counts using whitespace and character length heuristics. When exact token bounds are required with downstream providers, pass a tokenizer-specific counter.
+- **Local token heuristic:** The default counter estimates token counts from whitespace and character length. When exact counts matter for a downstream provider, pass your own `TokenCounter`.
 - **Not independently assessed:** Designed for local and disconnected use.
 
 ## Links
 
 - [Documentation (docs.rs)](https://docs.rs/harpe)
-- [Evidence & Claims](https://telarch.ai/evidence)
 - [Security Policy](https://github.com/Perseus-Computing-LLC/.github/blob/main/SECURITY.md)
 - [Telarch Overview](https://telarch.ai)
 
