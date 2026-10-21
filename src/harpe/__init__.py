@@ -5,6 +5,7 @@ from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .engine import ContextBudgetEngine, HeuristicTokenCounter
 from .dtoc import CompressedToolOutput, DynamicToolCompressor
 from .prompts import format_official_cot_prompt, format_qa_prompt
+from .conflicts import Conflict, annotate_conflicts, conflict_note, find_conflicts
 from .routing import (
     ContextRoute,
     QueryIntent,
@@ -86,6 +87,10 @@ __all__ = [
     "DynamicToolCompressor",
     "format_official_cot_prompt",
     "format_qa_prompt",
+    "Conflict",
+    "annotate_conflicts",
+    "conflict_note",
+    "find_conflicts",
     "ContextRoute",
     "QueryIntent",
     "RouteDecision",
