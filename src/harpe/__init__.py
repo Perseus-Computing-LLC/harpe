@@ -67,7 +67,7 @@ from .suppression import SuppressionController, SuppressionRule, SuppressionScop
 from .governor import BehavioralGovernor, GovernorDecision, GovernorVerdict
 from .self_history import ActionOutcome, AgentSelfHistoryTracker, SelfHistoryRecord
 
-__version__ = "0.1.0a4"
+__version__ = "0.1.0a5"
 
 __all__ = [
     "CognitiveDimension",
