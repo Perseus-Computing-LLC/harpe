@@ -16,7 +16,9 @@ from .routing import (
     is_preference_query,
     is_temporal_query,
     normalize_temporal_chunk,
+    parse_anchor_date,
     resolve_dynamic_budget,
+    resolve_relative_dates,
     route_by_fit,
 )
 
@@ -94,7 +96,9 @@ __all__ = [
     "is_preference_query",
     "is_temporal_query",
     "normalize_temporal_chunk",
+    "parse_anchor_date",
     "resolve_dynamic_budget",
+    "resolve_relative_dates",
     "route_by_fit",
     # NVIDIA DLI Extensions
     "PrecisionFormat",

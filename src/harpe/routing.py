@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, Iterable, Optional, Union
 
@@ -219,3 +219,149 @@ def route_by_fit(
         if total > threshold_tokens:
             return RouteDecision(route=ContextRoute.RETRIEVE, threshold_tokens=threshold_tokens)
     return RouteDecision(route=ContextRoute.WHOLE, threshold_tokens=threshold_tokens, whole_tokens=total)
+
+
+_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+           "november", "december"]
+_MONTH_NUM = {**{m: i + 1 for i, m in enumerate(_MONTHS)}, **{m[:3]: i + 1 for i, m in enumerate(_MONTHS)}, "sept": 9}
+_MONTH_RE = r"(" + "|".join(sorted(_MONTH_NUM, key=len, reverse=True)) + r")\.?"
+_ANCHOR_PATTERNS = (
+    (re.compile(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})"), ("y", "m", "d")),
+    (re.compile(r"(\d{1,2})(?:st|nd|rd|th)?\s+" + _MONTH_RE + r",?\s+(\d{4})", re.IGNORECASE), ("d", "mn", "y")),
+    (re.compile(_MONTH_RE + r"[\s-]+(\d{1,2})(?:st|nd|rd|th)?,?[\s-]+(\d{4})", re.IGNORECASE), ("mn", "d", "y")),
+)
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+                 "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "a couple of": 2, "couple of": 2}
+_NUM = r"(?:\d{1,3}|a couple of|couple of|" + "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True)) + r")"
+_UNIT = r"(?:days?|weeks?|months?|years?)"
+_RELATIVE = re.compile(
+    r"\b(?:"
+    r"(?P<dby>the day before yesterday)|(?P<dat>the day after tomorrow)|(?P<yd>yesterday)|(?P<ln>last night)"
+    r"|(?P<tm>tomorrow)"
+    rf"|(?P<ago>(?P<ago_n>{_NUM})\s+(?P<ago_u>{_UNIT})\s+ago)"
+    rf"|(?P<fn>(?P<fn_n>{_NUM})\s+(?P<fn_u>{_UNIT})\s+from now)"
+    r"|(?P<we>(?P<we_r>last|next|this)\s+weekend)"
+    r"|(?P<wk>(?P<wk_r>last|next|this)\s+week)"
+    r"|(?P<mo>(?P<mo_r>last|next|this)\s+month)"
+    r"|(?P<yr>(?P<yr_r>last|next|this)\s+year)"
+    r"|(?P<wd>last\s+(?P<wd_d>" + "|".join(_WEEKDAYS) + r"))"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def parse_anchor_date(value: Union[str, date, datetime, None]) -> Optional[date]:
+    """The calendar date in a session timestamp such as ``1:56 pm on 8 May, 2023``, ``2023/05/20 (Sat) 02:21``,
+    ``March-15-2024`` or ``2024-03-15``; ``None`` when there is none."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not value:
+        return None
+    for pattern, order in _ANCHOR_PATTERNS:
+        m = pattern.search(str(value))
+        if not m:
+            continue
+        parts = dict(zip(order, m.groups()))
+        month = int(parts["m"]) if "m" in parts else _MONTH_NUM.get(parts["mn"].lower().rstrip("."))
+        try:
+            return date(int(parts["y"]), int(month or 0), int(parts["d"]))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _day(d: date) -> str:
+    return f"{d.day} {_MONTHS[d.month - 1].capitalize()} {d.year}"
+
+
+def _span(a: date, b: date) -> str:
+    if (a.year, a.month) == (b.year, b.month):
+        return f"{a.day}-{b.day} {_MONTHS[a.month - 1].capitalize()} {a.year}"
+    if a.year == b.year:
+        return f"{a.day} {_MONTHS[a.month - 1].capitalize()} - {_day(b)}"
+    return f"{_day(a)} - {_day(b)}"
+
+
+def _shift_months(d: date, months: int) -> date:
+    y, m = divmod(d.year * 12 + d.month - 1 + months, 12)
+    return date(y, m + 1, 1)
+
+
+def _count(word: str) -> int:
+    word = " ".join(word.lower().split())
+    return int(word) if word.isdigit() else _NUMBER_WORDS[word]
+
+
+def _offset(anchor: date, n: int, unit: str) -> str:
+    unit = unit.lower().rstrip("s")
+    if unit == "day":
+        return _day(anchor + timedelta(days=n))
+    if unit == "week":
+        return _day(anchor + timedelta(weeks=n))
+    if unit == "month":
+        d = _shift_months(anchor, n)
+        return f"{_MONTHS[d.month - 1].capitalize()} {d.year}"
+    return str(anchor.year + n)
+
+
+def _resolve(m: "re.Match[str]", anchor: date) -> Optional[str]:
+    g = m.group
+    if g("dby"):
+        return _day(anchor - timedelta(days=2))
+    if g("dat"):
+        return _day(anchor + timedelta(days=2))
+    if g("yd") or g("ln"):
+        return _day(anchor - timedelta(days=1))
+    if g("tm"):
+        return _day(anchor + timedelta(days=1))
+    if g("ago"):
+        return _offset(anchor, -_count(g("ago_n")), g("ago_u"))
+    if g("fn"):
+        return _offset(anchor, _count(g("fn_n")), g("fn_u"))
+    if g("we"):
+        saturday = anchor + timedelta(days=5 - anchor.weekday())  # this week's Saturday (weeks start on Monday)
+        rel = g("we_r").lower()
+        if rel == "last":
+            saturday -= timedelta(days=7)
+        elif rel == "next":
+            saturday += timedelta(days=7)
+        return _span(saturday, saturday + timedelta(days=1))
+    if g("wk"):
+        monday = anchor - timedelta(days=anchor.weekday())
+        monday += timedelta(days={"last": -7, "next": 7}.get(g("wk_r").lower(), 0))
+        return "week of " + _day(monday)
+    if g("mo"):
+        d = _shift_months(anchor, {"last": -1, "next": 1}.get(g("mo_r").lower(), 0))
+        return f"{_MONTHS[d.month - 1].capitalize()} {d.year}"
+    if g("yr"):
+        return str(anchor.year + {"last": -1, "next": 1}.get(g("yr_r").lower(), 0))
+    if g("wd"):
+        back = (anchor.weekday() - _WEEKDAYS.index(g("wd_d").lower())) % 7 or 7
+        return _day(anchor - timedelta(days=back))
+    return None
+
+
+def resolve_relative_dates(text: str, anchor: Union[str, date, datetime, None]) -> str:
+    """Add the calendar date to each relative time expression in ``text``, against the date it was said on:
+    ``yesterday`` said on 11 May 2023 becomes ``yesterday [10 May 2023]``, ``last weekend`` gains its two days,
+    ``three weeks ago`` its date, ``last month`` its month.
+
+    A reader that sees a remembered turn out of its conversation (or after pruning) can then place it in time
+    without doing the date arithmetic itself. Expressions whose meaning is ambiguous (``in two weeks``, ``next
+    Friday``) are left alone, as is text whose ``anchor`` has no date (:func:`parse_anchor_date`). Expressions
+    already followed by a bracketed date are skipped, so resolving twice changes nothing more.
+    """
+    day = parse_anchor_date(anchor)
+    if day is None or not text:
+        return text
+
+    def annotate(m: "re.Match[str]") -> str:
+        if text[m.end():m.end() + 2] == " [":
+            return m.group(0)
+        resolved = _resolve(m, day)
+        return f"{m.group(0)} [{resolved}]" if resolved else m.group(0)
+
+    return _RELATIVE.sub(annotate, text)
