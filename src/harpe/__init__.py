@@ -6,7 +6,9 @@ from .engine import ContextBudgetEngine, HeuristicTokenCounter
 from .dtoc import CompressedToolOutput, DynamicToolCompressor
 from .prompts import format_official_cot_prompt, format_qa_prompt
 from .routing import (
+    ContextRoute,
     QueryIntent,
+    RouteDecision,
     classify_query_intent,
     create_persona_context_item,
     has_temporal_anchor,
@@ -15,6 +17,7 @@ from .routing import (
     is_temporal_query,
     normalize_temporal_chunk,
     resolve_dynamic_budget,
+    route_by_fit,
 )
 
 # NVIDIA DLI Cognitive & Acceleration Extensions
@@ -81,7 +84,9 @@ __all__ = [
     "DynamicToolCompressor",
     "format_official_cot_prompt",
     "format_qa_prompt",
+    "ContextRoute",
     "QueryIntent",
+    "RouteDecision",
     "classify_query_intent",
     "create_persona_context_item",
     "has_temporal_anchor",
@@ -90,6 +95,7 @@ __all__ = [
     "is_temporal_query",
     "normalize_temporal_chunk",
     "resolve_dynamic_budget",
+    "route_by_fit",
     # NVIDIA DLI Extensions
     "PrecisionFormat",
     "ModelArchitectureSpec",

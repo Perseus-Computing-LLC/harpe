@@ -20,6 +20,7 @@ Agents collect instructions, memory, documents and tool output faster than a mod
 - **The same answer every time.** With the default policy there is no randomness and no clock, so the same items and budget give the same selection.
 - **Your tokenizer.** Plug in your model's tokenizer through `TokenCounter`. Without one, Harpe uses an estimate.
 - **Confidential items stay home (Python).** With the default `destination="remote"`, items marked confidential are dropped before budgeting.
+- **Whole when it fits (Python).** `route_by_fit(history, threshold_tokens)` says whether a history fits under a token threshold whole, so it can go to the model as it is, or needs retrieval and a budget. It is off unless you give a threshold.
 - **Small.** The Rust crate has no dependencies, and Harpe contains no network code.
 
 ## Install

@@ -5,6 +5,16 @@ All notable changes to `harpe` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Python: fit-aware routing. `route_by_fit(items, threshold_tokens, token_counter=None)`, and
+  `ContextBudgetEngine.route(items, threshold_tokens)` with the engine's counter, return a `RouteDecision`:
+  `ContextRoute.WHOLE` with the history's token count when every item fits under the threshold (hand the
+  history over in order, unpruned), else `ContextRoute.RETRIEVE`. Counting stops at the first item over
+  the threshold, items with a `token_count` keep it, and a threshold of 0 or `None` turns routing off.
+  telarch-benchmarks measured a threshold of 32,000 reader tokens.
+
 ## [0.1.0-alpha.4] - 2026-10-19
 
 ### Fixed

@@ -1,13 +1,16 @@
-"""Query intent routing, dynamic knapsack budgeting, and temporal normalization for Harpe."""
+"""Query intent routing, fit-aware routing, dynamic knapsack budgeting, and temporal normalization for Harpe."""
 
 from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Iterable, Optional, Union
+
+from pydantic import BaseModel, Field
 
 from .models import ContextItem, TokenBudget
+from .protocols import TokenCounter
 
 
 class QueryIntent(str, Enum):
@@ -169,3 +172,50 @@ def create_persona_context_item(
         kwargs["token_count"] = token_count
 
     return ContextItem(**kwargs)
+
+
+class ContextRoute(str, Enum):
+    """How to build the context for a question over one history."""
+    WHOLE = "whole"  # the history fits under the threshold: hand over every item, in order, unpruned
+    RETRIEVE = "retrieve"  # it does not (or routing is off): retrieve candidates and synthesize within the budget
+
+
+class RouteDecision(BaseModel):
+    """What :func:`route_by_fit` decided, and the tokens it counted."""
+    route: ContextRoute
+    threshold_tokens: int = Field(default=0, ge=0, description="The threshold applied; 0 when routing is off.")
+    whole_tokens: Optional[int] = Field(
+        default=None, ge=0, description="Tokens of the whole history when it fits; None when it does not."
+    )
+
+
+def route_by_fit(
+    items: Iterable[Union[ContextItem, str]],
+    threshold_tokens: Optional[int],
+    token_counter: Optional[TokenCounter] = None,
+) -> RouteDecision:
+    """Fit-aware routing: hand a whole history over when it fits under ``threshold_tokens``, else retrieve.
+
+    A history that fits the reader's window whole needs no retrieval: passing every item, in its order,
+    gives the reader everything at a cost bounded by the threshold, and nothing can be missed. Above the
+    threshold the caller retrieves and synthesizes within its budget as usual. ``items`` are the history's
+    items (strings or :class:`ContextItem`, whose ``token_count`` is used when set); counting stops at the
+    first item that takes the total over the threshold. ``threshold_tokens`` of ``None`` or ``0`` turns
+    routing off (always ``RETRIEVE``). Count in the reader's tokens, and pick a threshold the reader's
+    window and price can take: telarch-benchmarks measured 32,000 tokens.
+    """
+    if not threshold_tokens or threshold_tokens <= 0:
+        return RouteDecision(route=ContextRoute.RETRIEVE, threshold_tokens=0)
+    if token_counter is None:
+        from .engine import HeuristicTokenCounter  # engine imports this module
+
+        token_counter = HeuristicTokenCounter()
+    total = 0
+    for item in items:
+        if isinstance(item, ContextItem):
+            total += item.token_count or token_counter.count_tokens(item.content)
+        else:
+            total += token_counter.count_tokens(item)
+        if total > threshold_tokens:
+            return RouteDecision(route=ContextRoute.RETRIEVE, threshold_tokens=threshold_tokens)
+    return RouteDecision(route=ContextRoute.WHOLE, threshold_tokens=threshold_tokens, whole_tokens=total)

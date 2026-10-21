@@ -5,14 +5,16 @@ from __future__ import annotations
 import math
 import re
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .routing import (
     QueryIntent,
+    RouteDecision,
     classify_query_intent,
     has_temporal_anchor,
     resolve_dynamic_budget,
+    route_by_fit,
 )
 
 
@@ -40,6 +42,11 @@ class ContextBudgetEngine(ContextSynthesizer):
     ) -> None:
         self.token_counter = token_counter or HeuristicTokenCounter()
         self.hooks: List[PruningHook] = list(hooks or [])
+
+    def route(self, items: Iterable[Union[ContextItem, str]], threshold_tokens: Optional[int]) -> RouteDecision:
+        """:func:`harpe.routing.route_by_fit` with this engine's token counter: whether to hand a whole
+        history over (it fits under ``threshold_tokens``) or to retrieve and :meth:`synthesize`."""
+        return route_by_fit(items, threshold_tokens, self.token_counter)
 
     def register_hook(self, hook: PruningHook) -> None:
         self.hooks.append(hook)
