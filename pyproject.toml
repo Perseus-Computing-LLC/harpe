@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "harpe"
-version = "0.1.0a5"
+version = "0.1.0a6"
 description = "Deterministic context synthesis and token budgeting for cognitive AI agents."
 readme = "README.md"
 authors = [

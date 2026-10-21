@@ -5,6 +5,21 @@ All notable changes to `harpe` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.6] - 2026-10-21
+
+### Added
+- Python: `resolve_relative_dates(text, anchor)` adds the calendar date to relative time expressions, counted
+  from the date the text was said: "yesterday" said on 11 May 2023 becomes "yesterday [10 May 2023]";
+  "last weekend", "three weeks ago" and "last month" gain their dates. Expressions with more than one
+  reading ("in two weeks", "next ...") are left alone. `parse_anchor_date(value)` reads the date in session
+  timestamps such as "1:56 pm on 8 May, 2023", "2023/05/20 (Sat) 02:21" or "2024-03-15". Apply it to the text
+  a model reads, not to what is indexed. In telarch-benchmarks (gpt-4o-mini reader) it raised LoCoMo by 4.5
+  points, 20.3 on its temporal questions; LongMemEval-S and BEAM did not change.
+- Python, experimental: `find_conflicts(texts, query=None, ...)` finds pairs where one text denies what another
+  states ("I've never written integration tests" against "I've written integration tests ...");
+  `conflict_note()` and `annotate_conflicts()` put a note after the denying sentence. In telarch-benchmarks the
+  notes did not improve BEAM's contradiction questions (slightly lower at 1M), so nothing calls it by default.
+
 ## [0.1.0-alpha.5] - 2026-10-21
 
 ### Added

@@ -21,21 +21,23 @@ Agents collect instructions, memory, documents and tool output faster than a mod
 - **Your tokenizer.** Plug in your model's tokenizer through `TokenCounter`. Without one, Harpe uses an estimate.
 - **Confidential items stay home (Python).** With the default `destination="remote"`, items marked confidential are dropped before budgeting.
 - **Whole when it fits (Python).** `route_by_fit(history, threshold_tokens)` says whether a history fits under a token threshold whole, so it can go to the model as it is, or needs retrieval and a budget. It is off unless you give a threshold.
+- **Dates on remembered turns (Python).** `resolve_relative_dates(text, said_on)` writes the calendar date next to phrases such as "yesterday", "last weekend" or "three weeks ago", counted from the day the text was said, so a model that sees a remembered turn out of its conversation can still place it in time. Phrases that could mean more than one date ("in two weeks", "next Friday") are left as they are. `parse_anchor_date()` reads that day from common session timestamps.
+- **Conflict notes (Python, experimental).** `find_conflicts(texts)` finds pairs where one text denies what another states, and `annotate_conflicts()` adds a note after the denial. Nothing calls it by default.
 - **Small.** The Rust crate has no dependencies, and Harpe contains no network code.
 
 ## Install
 
-This README describes 0.1.0-alpha.5 (0.1.0a5 on PyPI). It is a pre-release, so name the version.
+This README describes 0.1.0-alpha.6 (0.1.0a6 on PyPI). It is a pre-release, so name the version.
 
 ```toml
 # Rust: Cargo.toml
 [dependencies]
-harpe = "0.1.0-alpha.5"
+harpe = "0.1.0-alpha.6"
 ```
 
 ```bash
 # Python
-pip install harpe==0.1.0a5
+pip install harpe==0.1.0a6
 ```
 
 ## Quickstart
