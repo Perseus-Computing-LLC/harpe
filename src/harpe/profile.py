@@ -181,8 +181,25 @@ def _family_value(kind: str) -> Callable[[str, int], FrozenSet[str]]:
     return read
 
 
+_MONTH_NUMBER = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
+                 "nov": 11, "dec": 12}
+_ISO_DATE = re.compile(r"\b((?:19|20)\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
+_MONTH_DAY_YEAR = re.compile(r"\b(" + _MONTHS + r")\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b", re.I)
+_DAY_MONTH_YEAR = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(" + _MONTHS + r")\.?,?\s+((?:19|20)\d{2})\b", re.I)
+
+
+def _full_dates(text: str) -> FrozenSet[str]:
+    """Calendar dates written out in full ("1980-03-22", "March 22, 1980", "22 March 1980") as date:YYYY-MM-DD."""
+    triples = list(_ISO_DATE.findall(text))
+    triples += [(y, str(_MONTH_NUMBER[mon.lower()[:3]]), d) for mon, d, y in _MONTH_DAY_YEAR.findall(text)]
+    triples += [(y, str(_MONTH_NUMBER[mon.lower()[:3]]), d) for d, mon, y in _DAY_MONTH_YEAR.findall(text)]
+    return frozenset(f"date:{y}-{int(m):02d}-{int(d):02d}" for y, m, d in triples
+                     if 1 <= int(m) <= 12 and 1 <= int(d) <= 31)
+
+
 def _birthdate_value(text: str, start: int) -> FrozenSet[str]:
-    return frozenset(_years(text))
+    """Years, plus the full date when one is written out: two dates in the same year are still different dates."""
+    return frozenset(_years(text)) | _full_dates(text)
 
 
 def _names_value(text: str, start: int) -> FrozenSet[str]:
@@ -256,6 +273,15 @@ def _values_conflict(attribute: str, first: FrozenSet[str], later: FrozenSet[str
         if "has:no" in first and any(v.startswith("count:") and v != "count:0" for v in later):
             return True
         return False if ({v for v in first if v.startswith("has:")} & {v for v in later if v.startswith("has:")}) else None
+    if attribute == "birthdate":
+        # Compare full dates when both statements give one ("1980-03-22" against "1980-08-14" differ), else years.
+        a_dates = {v for v in first if v.startswith("date:")}
+        b_dates = {v for v in later if v.startswith("date:")}
+        if a_dates and b_dates:
+            return not (a_dates & b_dates)
+        a_years = first - a_dates
+        b_years = later - b_dates
+        return (not (a_years & b_years)) if a_years and b_years else None
     if first & later:
         # Shares a token with the record but adds new ones under a correction ("but my records list Sheffield",
         # "I studied civil engineering exclusively"): a different value, not a restatement.
@@ -322,7 +348,7 @@ DEFAULT_ATTRIBUTES: Tuple[AttributeSpec, ...] = (
             r"(?:new\s+)?(?:\w+\s+){0,2}(?:job|role|position|internship|gig|post|company|firm|startup)\b",
             r"\b(?:new|current)\s+(?:job|role|position|internship|employer|company|title|gig)\b",
             r"\b(?:promoted|promotion|laid\s+off|got\s+fired|was\s+fired|quit\s+my\s+job|resigned|unemployed|"
-            r"between\s+jobs|lost\s+my\s+job|retired|job\s+hunting|looking\s+for\s+(?:a\s+)?(?:job|work))\b",
+            r"between\s+jobs|lost\s+(?:my|the)\s+(?:\w+\s+){0,2}job|retired|job\s+hunting|looking\s+for\s+(?:a\s+)?(?:job|work))\b",
             r"\bmy\s+(?:job|role|position|title|employer|salary|income|pay)\s+(?:is|was|as|at|now|has)\b",
             r"\b(?:i\s+)?(?:earn|make|making|earning)\s+(?:about\s+|around\s+|roughly\s+|between\s+)?\$?\d",
             r"\b(?:income|salary|pay|savings)\b[^.]{0,40}\d",
@@ -445,7 +471,7 @@ DEFAULT_ATTRIBUTES: Tuple[AttributeSpec, ...] = (
             # else's name ("my kids Maya (born ...)", "dating Helen (born ...)") is their birth date, not the user's.
             r"(?:\b(?:i\s+was\s+|i'?m\s+|i\u2019m\s+|i\s+am\s+)|^\W*)born\s+(?:on\s+|in\s+)?(?:(?:19|20)\d\d|\d{1,2}(?:st|nd|rd|th)?\s+"
             r"(?:of\s+)?(?:" + _MONTHS + r")|(?:" + _MONTHS + r")\s+\d)",
-            r"\bmy\s+(?:birthday|birth\s+date|date\s+of\s+birth|bday|birth\s+year)\b",
+            r"\bmy\s+(?:birthday|birth[\s-]?date|date\s+of\s+birth|bday|b-day|birth\s+year|dob|d\.o\.b)\b",
             r"\b(?:i\s+turned|i'?m\s+turning|i\s+turn)\s+\d{2}\b", rf"\b{_IM}\s+\d{{2}}\s+(?:years\s+old|now)\b",
         ),
         question=(r"\b(?:birthdate|birth\s+date|birthday|date\s+of\s+birth|when\s+was\s+(?:the\s+)?user\s+born|how\s+old|"
@@ -675,6 +701,10 @@ class ProfileLedger:
                 head = (f"{spec.label} (does not change over time; the user's first statement is the established "
                         f"record, and a later claim that differs does not replace it):")
             lines = [head]
+            if detail == "employment" and attribute == "career":
+                status = _employment_line(resolved)
+                if status:
+                    lines.append(status)
             for r in shown:
                 lines.append(f"- {r.statement.date or 'undated'}, {self._label(r)}: \"{_clip(r.statement.text, max_words)}\"")
             blocks.append("\n".join(lines))
@@ -698,6 +728,76 @@ class ProfileLedger:
         return "later claim (where it differs, the established record stands)"
 
 
+_JOB_TITLE = (r"(?:intern|manager|director|engineer|analyst|consultant|designer|developer|specialist|coordinator|"
+              r"assistant|associate|officer|lead|senior|junior|executive|teacher|nurse|accountant|lawyer|clerk|"
+              r"technician|administrator|supervisor|representative)")
+# The working arrangement a career statement describes. Only explicit wording counts: someone "looking for a new
+# job", "job hunting" or doing some "freelance work" may still be employed, so none of these sets the status.
+_EMPLOYMENT_KINDS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
+    ("self-employed or own business", re.compile(
+        r"\b(?:self[- ]employed|entrepreneur\w*|(?:co-?)?found(?:ed|ing)\s+(?:a|my|our|the)\b|own\s+boss|"
+        r"(?:" + _IM + r"|" + _IVE + r"\s+been)\s+" + _ADV + r"(?:an?\s+)?freelanc\w*|i\s+" + _ADV + r"freelance|"
+        r"(?:went|gone|going|go)\s+freelance|"
+        r"my\s+own\s+(?:\w+\s+)?(?:business|company|firm|startup|shop|practice|studio|agency|consultancy)|"
+        r"(?:started|starting|launched|launching|opened|opening|running|run|runs)\s+(?:a|my|our)\s+(?:own\s+)?(?:\w+\s+)?"
+        r"(?:business|company|startup|firm|shop|practice|studio|agency|consultancy))\b", re.I)),
+    ("unemployed", re.compile(
+        r"\b(?:unemployed|laid\s+off|(?:was|been|got|getting)\s+let\s+go|(?:got|was|been|getting)\s+fired|"
+        r"lost\s+(?:my|the)\s+(?:\w+\s+){0,2}(?:job|position)|between\s+jobs|out\s+of\s+(?:a\s+)?(?:work|job)|"
+        r"(?:not|no\s+longer)\s+(?:currently\s+)?employed|quit\s+my\s+job|resigned\s+from)\b", re.I)),
+    ("retired", re.compile(
+        r"\b(?:i\s+(?:just\s+|recently\s+|finally\s+|officially\s+)?retired|(?:i'?m|i\u2019m|i\s+am)\s+(?:now\s+|"
+        r"officially\s+|happily\s+)?retired|since\s+i\s+retired)\b", re.I)),
+    ("employed", re.compile(
+        r"\b(?:work(?:s|ed|ing)?\s+(?:as|at|for)|employed\s+(?:as|at|by|full[- ]time|part[- ]time)|"
+        + _IM + r"\s+" + _ADV + r"employed|"
+        r"(?:started|starting|landed|accepted|took|got|began|joined|joining|start)\s+(?:a\s+|an\s+|my\s+|the\s+)?"
+        r"(?:new\s+)?(?:\w+\s+){0,2}(?:job|role|position|internship|post)|(?:joined|joining|started\s+at|now\s+at)\s+"
+        r"(?-i:[A-Z])|promot(?:ed|ion)|(?:new|current)\s+(?:job|role|position|employer|title)|"
+        r"my\s+(?:job|role|position|title|employer)\s+(?:is|as|at|now)|as\s+(?:an?|the)\s+(?:\w+\s+){0,4}" + _JOB_TITLE +
+        r"|" + _IM + r"\s+" + _ADV + r"(?:an?|the)\s+(?:\w+\s+){0,4}" + _JOB_TITLE + r")\b", re.I)),
+)
+
+
+def _employment_kind(text: str) -> Optional[str]:
+    """The working arrangement a statement describes; when it names several, the one mentioned last ("I got laid
+    off but landed a new job" is employed, "I quit my job to start my own company" is self-employed)."""
+    best: Optional[Tuple[int, str]] = None
+    for kind, pattern in _EMPLOYMENT_KINDS:
+        for m in pattern.finditer(text):
+            if best is None or m.start() > best[0]:
+                best = (m.start(), kind)
+    return best[1] if best else None
+
+
+def _employment_line(resolved: List[ResolvedStatement]) -> Optional[str]:
+    """For a question about employment status: the status the career statements imply before and after the latest
+    change (the most recent session that implies one, against the last statement before it).
+
+    A reader shown a timeline of job titles tends to read a new title as a change of employment status; this line
+    separates the two. It compares the latest change only: an earlier spell out of work does not make a later move
+    between two jobs a change of status."""
+    marked = []
+    for r in resolved:
+        kind = _employment_kind(r.statement.text)
+        if kind is not None:
+            marked.append((r.statement, kind))
+    if not marked:
+        return None
+    head = "Employment status implied by these statements (employed, unemployed, self-employed or own business, retired):"
+    note = ("A new job, title or employer while working does not change the employment status; only a move between "
+            "these states does.")
+    last_session = marked[-1][0].order[:1]
+    now_statement, now_kind = marked[-1]
+    before = [m for m in marked if m[0].order[:1] != last_session]
+    if not before:
+        return f"{head} {now_kind} ({now_statement.date or 'undated'}); no earlier statement implies one. {note}"
+    prev_statement, prev_kind = before[-1]
+    verdict = "unchanged" if prev_kind == now_kind else "changed"
+    return (f"{head} before the latest change, {prev_kind} ({prev_statement.date or 'undated'}); after it, {now_kind} "
+            f"({now_statement.date or 'undated'}); {verdict}. {note}")
+
+
 def _focus(resolved: List[ResolvedStatement], detail: str) -> List[ResolvedStatement]:
     """For a question about one detail of a family member (a date, a name), keep statements that carry it."""
     want = {"date": lambda s: bool(_years(s.text)), "name": lambda s: bool(_proper_nouns(s.text)),
@@ -717,8 +817,11 @@ def _focus(resolved: List[ResolvedStatement], detail: str) -> List[ResolvedState
 
 
 def question_detail(question: str) -> Optional[str]:
-    """Which detail of a family member a question asks for, if any."""
+    """Which detail a question asks for, if any: the user's employment status ("employment"), or a date, name, kind
+    or count of a family member."""
     q = question.lower()
+    if re.search(r"\b(?:employment\s+(?:status|situation)|(?:un|self[- ])?employed)\b", q):
+        return "employment"
     if re.search(r"\b(?:birth\s*date|birthday|born|date\s+of\s+birth|how\s+old|age)\b", q):
         return "date"
     if re.search(r"\bname\b", q):
