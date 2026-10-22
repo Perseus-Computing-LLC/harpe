@@ -69,8 +69,16 @@ from .open_loops import OpenLoop, OpenLoopStatus, OpenLoopTracker
 from .suppression import SuppressionController, SuppressionRule, SuppressionScope
 from .governor import BehavioralGovernor, GovernorDecision, GovernorVerdict
 from .self_history import ActionOutcome, AgentSelfHistoryTracker, SelfHistoryRecord
+from .profile import (
+    AttributeSpec,
+    DEFAULT_ATTRIBUTES,
+    ProfileLedger,
+    ProfileStatement,
+    ResolvedStatement,
+    question_detail,
+)
 
-__version__ = "0.1.0a6"
+__version__ = "0.1.0a7"
 
 __all__ = [
     "CognitiveDimension",
@@ -149,4 +157,10 @@ __all__ = [
     "ActionOutcome",
     "SelfHistoryRecord",
     "AgentSelfHistoryTracker",
+    "AttributeSpec",
+    "DEFAULT_ATTRIBUTES",
+    "ProfileLedger",
+    "ProfileStatement",
+    "ResolvedStatement",
+    "question_detail",
 ]
