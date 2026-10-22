@@ -104,3 +104,62 @@ def test_change_keeps_the_previous_state_over_later_questions():
     assert len(shown) == 6
     assert any("Northern Logistics" in t for t in texts) and any("Huaxin Consulting" in t for t in texts)
     assert [x.statement.order for x in shown] == sorted(x.statement.order for x in shown)
+
+
+def test_birthdate_one_word_and_dob_statements_are_read():
+    ledger = _ledger([
+        (0, "My birthdate is 1980-03-22, in case the form asks."),
+        (1, "Quick fix for the paperwork: my DOB is 1980-08-14."),
+    ])
+    resolved = ledger.resolve("birthdate")
+    assert [r.status for r in resolved] == ["established", "conflicting"]  # same year, different date
+    assert "1980-03-22" in resolved[0].statement.text
+    q = "What is the user's birthdate?"
+    block = ledger.render(ledger.route(q), detail=question_detail(q))
+    assert "ESTABLISHED RECORD" in block and block.index("1980-03-22") < block.index("1980-08-14")
+
+
+def test_birthdate_same_date_in_two_formats_is_consistent():
+    ledger = _ledger([
+        (0, "I was born on March 22, 1980."),
+        (1, "For the record, I was born on 22 March 1980."),
+    ])
+    assert [r.status for r in ledger.resolve("birthdate")] == ["established", "consistent"]
+
+
+def test_employment_question_gets_a_status_line_not_a_title_history():
+    ledger = _ledger([
+        (0, "Quick update: I'm now an intern at Northern Logistics."),
+        (1, "Big news: I just started a new job as a director at Huaxin Consulting."),
+    ])
+    q = "Has the user's employment status stayed the same?"
+    assert question_detail(q) == "employment"
+    block = ledger.render(ledger.route(q), detail=question_detail(q))
+    assert "before the latest change, employed (2024-01-01); after it, employed (2024-01-02); unchanged." in block
+    assert "Huaxin Consulting" in block  # the statements themselves are still shown
+
+
+def test_employment_question_reports_a_change_of_status():
+    ledger = _ledger([
+        (0, "I work as an analyst at a regional bank."),
+        (1, "Quick update: I got laid off last week, so money is tight."),
+    ])
+    q = "Did the user's employment status remain the same?"
+    block = ledger.render(ledger.route(q), detail=question_detail(q))
+    assert "before the latest change, employed (2024-01-01); after it, unemployed (2024-01-02); changed." in block
+
+
+def test_employment_kind_reads_the_last_state_named():
+    from harpe.profile import _employment_kind
+    assert _employment_kind("I got laid off in May but landed a new job last week.") == "employed"
+    assert _employment_kind("I quit my job to start my own company.") == "self-employed or own business"
+    assert _employment_kind("I'm job hunting while I keep my current role.") == "employed"
+    assert _employment_kind("I'm balancing job hunting with some freelance work.") is None
+    assert _employment_kind("Any tips on job hunting?") is None
+
+
+def test_other_career_questions_get_no_employment_line():
+    ledger = _ledger([(0, "I work as an analyst at a regional bank.")])
+    q = "What is the user's job title?"
+    assert question_detail(q) != "employment"
+    assert "Employment status implied" not in ledger.render(ledger.route(q), detail=question_detail(q))

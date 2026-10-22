@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the attributes a question asks about and `render(attributes)` writes a short, dated block for the reader that
   keeps both the previous and the current state. Only the user's turns are read. `question_detail(question)`
   says which detail of a family member a question asks for. Not yet measured with a reader model.
+- `ProfileLedger`: a question about the user's employment status (`question_detail` returns `"employment"`) gets a
+  line stating the status the career statements imply before and after the latest change (employed, unemployed,
+  self-employed or own business, retired), so a new job title or employer is not read as a change of status.
+  Not yet measured with a reader model.
+
+### Fixed
+- `ProfileLedger`: birth-date statements written as "my birthdate", "my birth-date" or "my DOB" are read, so the
+  first such statement becomes the established record. Two birth-date statements that give full dates in the
+  same year are compared by date ("1980-03-22" and "1980-08-14" conflict; "March 22, 1980" and "22 March 1980"
+  agree).
+- `ProfileLedger`: "lost the job" and "lost my retail job" are read as career statements.
 
 ### Changed
 - CI: every action is pinned to a full commit SHA (the Rust toolchain action followed a branch) and
