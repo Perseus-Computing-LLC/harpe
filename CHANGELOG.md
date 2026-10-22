@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Python, experimental: `ProfileLedger` keeps per-attribute timelines of the user's own statements (residence,
+  career, relationship, work status, health, family members, name, birthplace, birth date, gender, education)
+  and resolves them by whether the attribute can change. For attributes that change, statements from the latest
+  session are current and earlier ones are superseded; for attributes that do not, the first statement is the
+  established record and a later claim with a different value is marked as conflicting. `route(question)` picks
+  the attributes a question asks about and `render(attributes)` writes a short, dated block for the reader that
+  keeps both the previous and the current state. Only the user's turns are read. `question_detail(question)`
+  says which detail of a family member a question asks for. Not yet measured with a reader model.
+
 ### Changed
 - CI: every action is pinned to a full commit SHA (the Rust toolchain action followed a branch) and
   runs on Node 24. Dependabot proposes weekly grouped updates for actions, Cargo and Python
