@@ -212,19 +212,53 @@ pub trait ContextSynthesizer: Send + Sync {
     ) -> Result<SynthesisReport, HarpeError>;
 }
 
-/// Fast heuristic token counter estimating tokens via word and character ratios.
+/// Default token estimate, the same in Rust and Python: the larger of the number of pieces and a
+/// quarter of the characters, rounded up. A piece is a run of characters other than whitespace and
+/// ASCII symbols, or one ASCII symbol (an ASCII character other than a letter, digit, `_` or
+/// whitespace). Whitespace is what Python's `str.isspace()` accepts: Unicode `White_Space` plus
+/// U+001C to U+001F. Both test suites check `tests/token_vectors.tsv`.
 #[derive(Debug, Default, Clone)]
 pub struct HeuristicTokenCounter;
 
+impl HeuristicTokenCounter {
+    // How each ASCII character counts. Any other character is a space if it is Unicode
+    // `White_Space`, and part of a word otherwise.
+    const WORD: u8 = 0;
+    const SPACE: u8 = 1;
+    const SYMBOL: u8 = 2;
+    const ASCII_CLASS: [u8; 128] = {
+        let mut class = [Self::SYMBOL; 128];
+        let mut b = 0;
+        while b < 128 {
+            let c = b as u8;
+            if c.is_ascii_alphanumeric() || c == b'_' {
+                class[b] = Self::WORD;
+            } else if matches!(c, b'\t'..=b'\r' | 0x1c..=b' ') {
+                class[b] = Self::SPACE;
+            }
+            b += 1;
+        }
+        class
+    };
+}
+
 impl TokenCounter for HeuristicTokenCounter {
     fn count_tokens(&self, text: &str) -> usize {
-        if text.is_empty() {
-            return 0;
+        let (mut pieces, mut chars, mut in_word) = (0usize, 0usize, false);
+        for c in text.chars() {
+            let class = if c.is_ascii() {
+                Self::ASCII_CLASS[c as usize]
+            } else if c.is_whitespace() {
+                Self::SPACE
+            } else {
+                Self::WORD
+            };
+            let starts_piece = class == Self::SYMBOL || (class == Self::WORD && !in_word);
+            pieces += usize::from(starts_piece);
+            chars += 1;
+            in_word = class == Self::WORD;
         }
-        let words = text.split_whitespace().count();
-        let chars = text.chars().count();
-        let char_estimate = chars.div_ceil(4);
-        std::cmp::max(words, char_estimate)
+        pieces.max(chars.div_ceil(4))
     }
 }
 
@@ -377,6 +411,32 @@ mod tests {
         let counter = HeuristicTokenCounter;
         assert_eq!(counter.count_tokens(""), 0);
         assert!(counter.count_tokens("Hello world from Harpe") >= 4);
+    }
+
+    #[test]
+    fn test_heuristic_token_counter_matches_the_shared_vectors() {
+        let counter = HeuristicTokenCounter;
+        let mut checked = 0;
+        for line in include_str!("../tests/token_vectors.tsv").lines() {
+            if line.starts_with('#') {
+                continue;
+            }
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 3, "{line}");
+            let bytes: Vec<u8> = (0..fields[1].len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&fields[1][i..i + 2], 16).unwrap())
+                .collect();
+            let text = String::from_utf8(bytes).unwrap();
+            assert_eq!(
+                counter.count_tokens(&text),
+                fields[0].parse::<usize>().unwrap(),
+                "{}",
+                fields[2]
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 199);
     }
 
     #[test]

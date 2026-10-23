@@ -5,6 +5,21 @@ All notable changes to `harpe` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Rust and Python now count tokens with one default rule: the larger of the number of pieces (words and ASCII
+  punctuation marks) and a quarter of the characters, rounded up. `cargo test` and `pytest` both check the 199 shared
+  vectors in `tests/token_vectors.tsv`.
+  - Python's counts are unchanged for ASCII text. Characters outside ASCII, other than whitespace, now count as
+    letters in Python, as they already did in Rust, so a curly quote or a full-width comma no longer splits a word.
+  - Rust now counts ASCII punctuation marks as pieces, so code and other text with many of them counts higher and
+    fewer such items fit a budget. The 200 items of telarch-benchmarks' phase 1 count 6,800 tokens in both languages
+    (Rust counted 4,900), and Rust now keeps 44 of them within the 1,500-token budget instead of 61.
+- Python: without pruning hooks, `synthesize()` copies only the items it has to count. Items that already have a
+  `token_count` go through as they are, so the report holds the caller's own objects for them. Hooks may change
+  items in place, so with hooks every item is still copied.
+
 ## [0.1.0-alpha.6] - 2026-10-21
 
 ### Added

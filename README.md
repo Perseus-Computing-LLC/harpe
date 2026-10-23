@@ -92,7 +92,7 @@ Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computin
 - **Pinned items stay.** Items that are pinned or at priority 0 (and, in Python, items of the invariant dimension) are always included. If they alone exceed the budget, nothing else is added and the report shows the overrun (`synthesize` in `src/harpe/engine.py` and `src/lib.rs`).
 - **Greedy by priority by default.** `PrunePolicy.LOWEST_PRIORITY` sorts the other items by priority (lower number first; in Python, newer first among equals) and adds each one that still fits. Other policies order items by age, input order or a relevance score; the Python engine also has a dynamic-programming selection over a per-item utility score (`KNAPSACK_DP`).
 - **Confidential items withheld.** With the default `destination="remote"`, the Python engine drops every item marked confidential before budgeting, so it never takes a slot or reaches the output (`src/harpe/engine.py`).
-- **Token counts.** The default counter estimates a count from word count and character length; pass your own `TokenCounter` for exact counts.
+- **Token counts.** The default counter takes the larger of two estimates: the number of words and ASCII punctuation marks, or a quarter of the characters. Rust and Python count the same text the same way; both test suites check the shared vectors in `tests/token_vectors.tsv`. Items that already have a `token_count` are not counted again. Pass your own `TokenCounter` for exact counts.
 
 ## Limits
 
@@ -101,7 +101,7 @@ Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computin
 - **Pinned overrun:** Pinned items are kept even when they exceed the budget.
 - **Time-dependent policies:** `KNAPSACK_DP` and `DUO_ATTENTION` score items by age against the current time, so their selection can change as time passes.
 - **Allocations:** Harpe allocates context items and report structures during synthesis.
-- **Local token heuristic:** The default counter estimates token counts from whitespace and character length. When exact counts matter for a downstream provider, pass your own `TokenCounter`.
+- **Local token heuristic:** The default counter is an estimate, not your model's tokenizer. It treats characters outside ASCII, other than spaces, as letters, so it can undercount text written without spaces, such as Chinese or Japanese. When exact counts matter for a downstream provider, pass your own `TokenCounter`.
 - **Not independently assessed:** No security review or certification has been completed. Designed for local and disconnected use.
 
 ## Security

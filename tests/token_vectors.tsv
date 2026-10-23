@@ -1,0 +1,205 @@
+# Token-count vectors shared by the Rust and Python tests (src/lib.rs, tests/test_token_vectors.py).
+# Each line: the expected count, a tab, the text as UTF-8 in hex, a tab, a description.
+# The rule: the larger of the number of pieces and a quarter of the characters, rounded up. A piece is a run of
+# characters other than whitespace and ASCII symbols, or one ASCII symbol: an ASCII character other than a letter,
+# digit, underscore or whitespace. Whitespace is what Python's str.isspace() accepts: Unicode White_Space plus
+# U+001C to U+001F.
+0		empty text
+1	61	one letter
+1	20	one space: no pieces, and a quarter of one character rounds up to 1
+2	202020090a2020	whitespace only
+1	5f	underscore is a word character
+2	5f5f696e69745f5f	underscores join a word
+1	21	one ASCII symbol
+3	212121	each ASCII symbol is its own piece
+2	612062	two words
+3	612d62	an ASCII symbol between letters splits them
+250	78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878	1,000 letters: a quarter of the characters wins
+125	776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420776f726420	100 words, each followed by a space
+3	610061	U+0000 between letters: ASCII symbol
+3	610161	U+0001 between letters: ASCII symbol
+3	610261	U+0002 between letters: ASCII symbol
+3	610361	U+0003 between letters: ASCII symbol
+3	610461	U+0004 between letters: ASCII symbol
+3	610561	U+0005 between letters: ASCII symbol
+3	610661	U+0006 between letters: ASCII symbol
+3	610761	U+0007 between letters: ASCII symbol
+3	610861	U+0008 between letters: ASCII symbol
+2	610961	U+0009 between letters: whitespace
+2	610a61	U+000A between letters: whitespace
+2	610b61	U+000B between letters: whitespace
+2	610c61	U+000C between letters: whitespace
+2	610d61	U+000D between letters: whitespace
+3	610e61	U+000E between letters: ASCII symbol
+3	610f61	U+000F between letters: ASCII symbol
+3	611061	U+0010 between letters: ASCII symbol
+3	611161	U+0011 between letters: ASCII symbol
+3	611261	U+0012 between letters: ASCII symbol
+3	611361	U+0013 between letters: ASCII symbol
+3	611461	U+0014 between letters: ASCII symbol
+3	611561	U+0015 between letters: ASCII symbol
+3	611661	U+0016 between letters: ASCII symbol
+3	611761	U+0017 between letters: ASCII symbol
+3	611861	U+0018 between letters: ASCII symbol
+3	611961	U+0019 between letters: ASCII symbol
+3	611a61	U+001A between letters: ASCII symbol
+3	611b61	U+001B between letters: ASCII symbol
+2	611c61	U+001C between letters: whitespace
+2	611d61	U+001D between letters: whitespace
+2	611e61	U+001E between letters: whitespace
+2	611f61	U+001F between letters: whitespace
+2	612061	U+0020 between letters: whitespace
+3	612161	U+0021 between letters: ASCII symbol
+3	612261	U+0022 between letters: ASCII symbol
+3	612361	U+0023 between letters: ASCII symbol
+3	612461	U+0024 between letters: ASCII symbol
+3	612561	U+0025 between letters: ASCII symbol
+3	612661	U+0026 between letters: ASCII symbol
+3	612761	U+0027 between letters: ASCII symbol
+3	612861	U+0028 between letters: ASCII symbol
+3	612961	U+0029 between letters: ASCII symbol
+3	612a61	U+002A between letters: ASCII symbol
+3	612b61	U+002B between letters: ASCII symbol
+3	612c61	U+002C between letters: ASCII symbol
+3	612d61	U+002D between letters: ASCII symbol
+3	612e61	U+002E between letters: ASCII symbol
+3	612f61	U+002F between letters: ASCII symbol
+1	613061	U+0030 between letters: word character
+1	613161	U+0031 between letters: word character
+1	613261	U+0032 between letters: word character
+1	613361	U+0033 between letters: word character
+1	613461	U+0034 between letters: word character
+1	613561	U+0035 between letters: word character
+1	613661	U+0036 between letters: word character
+1	613761	U+0037 between letters: word character
+1	613861	U+0038 between letters: word character
+1	613961	U+0039 between letters: word character
+3	613a61	U+003A between letters: ASCII symbol
+3	613b61	U+003B between letters: ASCII symbol
+3	613c61	U+003C between letters: ASCII symbol
+3	613d61	U+003D between letters: ASCII symbol
+3	613e61	U+003E between letters: ASCII symbol
+3	613f61	U+003F between letters: ASCII symbol
+3	614061	U+0040 between letters: ASCII symbol
+1	614161	U+0041 between letters: word character
+1	614261	U+0042 between letters: word character
+1	614361	U+0043 between letters: word character
+1	614461	U+0044 between letters: word character
+1	614561	U+0045 between letters: word character
+1	614661	U+0046 between letters: word character
+1	614761	U+0047 between letters: word character
+1	614861	U+0048 between letters: word character
+1	614961	U+0049 between letters: word character
+1	614a61	U+004A between letters: word character
+1	614b61	U+004B between letters: word character
+1	614c61	U+004C between letters: word character
+1	614d61	U+004D between letters: word character
+1	614e61	U+004E between letters: word character
+1	614f61	U+004F between letters: word character
+1	615061	U+0050 between letters: word character
+1	615161	U+0051 between letters: word character
+1	615261	U+0052 between letters: word character
+1	615361	U+0053 between letters: word character
+1	615461	U+0054 between letters: word character
+1	615561	U+0055 between letters: word character
+1	615661	U+0056 between letters: word character
+1	615761	U+0057 between letters: word character
+1	615861	U+0058 between letters: word character
+1	615961	U+0059 between letters: word character
+1	615a61	U+005A between letters: word character
+3	615b61	U+005B between letters: ASCII symbol
+3	615c61	U+005C between letters: ASCII symbol
+3	615d61	U+005D between letters: ASCII symbol
+3	615e61	U+005E between letters: ASCII symbol
+1	615f61	U+005F between letters: word character
+3	616061	U+0060 between letters: ASCII symbol
+1	616161	U+0061 between letters: word character
+1	616261	U+0062 between letters: word character
+1	616361	U+0063 between letters: word character
+1	616461	U+0064 between letters: word character
+1	616561	U+0065 between letters: word character
+1	616661	U+0066 between letters: word character
+1	616761	U+0067 between letters: word character
+1	616861	U+0068 between letters: word character
+1	616961	U+0069 between letters: word character
+1	616a61	U+006A between letters: word character
+1	616b61	U+006B between letters: word character
+1	616c61	U+006C between letters: word character
+1	616d61	U+006D between letters: word character
+1	616e61	U+006E between letters: word character
+1	616f61	U+006F between letters: word character
+1	617061	U+0070 between letters: word character
+1	617161	U+0071 between letters: word character
+1	617261	U+0072 between letters: word character
+1	617361	U+0073 between letters: word character
+1	617461	U+0074 between letters: word character
+1	617561	U+0075 between letters: word character
+1	617661	U+0076 between letters: word character
+1	617761	U+0077 between letters: word character
+1	617861	U+0078 between letters: word character
+1	617961	U+0079 between letters: word character
+1	617a61	U+007A between letters: word character
+3	617b61	U+007B between letters: ASCII symbol
+3	617c61	U+007C between letters: ASCII symbol
+3	617d61	U+007D between letters: ASCII symbol
+3	617e61	U+007E between letters: ASCII symbol
+3	617f61	U+007F between letters: ASCII symbol
+2	61c28561	U+0085 between letters: whitespace
+2	61c2a061	U+00A0 between letters: whitespace
+2	61e19a8061	U+1680 between letters: whitespace
+2	61e2808061	U+2000 between letters: whitespace
+2	61e2808161	U+2001 between letters: whitespace
+2	61e2808261	U+2002 between letters: whitespace
+2	61e2808361	U+2003 between letters: whitespace
+2	61e2808461	U+2004 between letters: whitespace
+2	61e2808561	U+2005 between letters: whitespace
+2	61e2808661	U+2006 between letters: whitespace
+2	61e2808761	U+2007 between letters: whitespace
+2	61e2808861	U+2008 between letters: whitespace
+2	61e2808961	U+2009 between letters: whitespace
+2	61e2808a61	U+200A between letters: whitespace
+2	61e280a861	U+2028 between letters: whitespace
+2	61e280a961	U+2029 between letters: whitespace
+2	61e280af61	U+202F between letters: whitespace
+2	61e2819f61	U+205F between letters: whitespace
+2	61e3808061	U+3000 between letters: whitespace
+1	61c2ad61	U+00AD soft hyphen between letters: not whitespace
+1	61e1a08e61	U+180E Mongolian vowel separator between letters: not whitespace
+1	61e2808b61	U+200B zero width space between letters: not whitespace
+1	61e2808c61	U+200C zero width non-joiner between letters: not whitespace
+1	61e2808d61	U+200D zero width joiner between letters: not whitespace
+1	61e281a061	U+2060 word joiner between letters: not whitespace
+1	61efbbbf61	U+FEFF zero width no-break space between letters: not whitespace
+1	636166c3a9	accented letter
+3	6e61c3af76652072c3a973756dc3a9	accented words
+2	4772c3b6c39f65	German sharp s
+2	646f6ee2809974	a curly apostrophe joins the word
+2	e2809c71756f746564e2809d	curly quotes join the word
+3	776f7264e28094776f7264	an em dash joins the words
+2	77616974e280a6	an ellipsis character joins the word
+2	e697a5e69cace8aa9ee381aee38386e382ade382b9e38388	Japanese without spaces
+2	e4bda0e5a5bdefbc8ce4b896e7958ce38082	Chinese with full-width punctuation
+4	e4bb8ae5a4a9e5a4a9e6b094e5be88e5a5bdefbc8ce68891e4bbace58ebbe585ace59bade695a3e6ada5e590a7e38082	Chinese sentence
+3	d0bfd180d0b8d0b2d0b5d1822c20d0bcd0b8d180	Cyrillic with an ASCII comma
+4	d985d8b1d8add8a8d8a720d8a8d8a7d984d8b9d8a7d984d985	Arabic
+4	e0a4a8e0a4aee0a4b8e0a58de0a4a4e0a58720e0a4a6e0a581e0a4a8e0a4bfe0a4afe0a4be	Devanagari with combining marks
+1	65cc81	combining acute accent
+1	f09f8e89f09f8e89f09f8e89	three emoji
+2	6f6b20f09f918d	a word and an emoji
+1	f09f91a9e2808df09f92bb	emoji joined by a zero width joiner
+1	efbca1efbca2efbca3efbc81	full-width letters and punctuation
+3	783d31e2869279	an arrow joins the word next to it
+5	c39c6ec3af63c3b664c3a95f6e61c3af76652d74657374	mixed ASCII and non-ASCII letters with an underscore and a hyphen
+34	666e2070726f636573735f73756273797374656d5f302829202d3e20526573756c743c28292c204572726f723e207b206c65742078203d2034323b207072696e746c6e21282272756e6e696e67206379636c6522293b204f6b28282929207d	telarch-benchmarks phase 1, 200-item set, item 0
+34	666e2070726f636573735f73756273797374656d5f3139392829202d3e20526573756c743c28292c204572726f723e207b206c65742078203d2034323b207072696e746c6e21282272756e6e696e67206379636c6522293b204f6b28282929207d	telarch-benchmarks phase 1, 200-item set, item 199
+21	546163746963616c20666565642073656e736f7220656e74727920302077697468206f7065726174696f6e616c20636f6f7264696e6174657320616e64206d697373696f6e20706172616d65746572732e	telarch-benchmarks phase 1, 10-item set, item 0
+35	7b226964223a20372c20226e616d65223a20226861727065222c202274616773223a205b2261222c202262225d2c20226f6b223a20747275657d	JSON object
+13	64656620662878293a0a2020202072657475726e2078202a2a2032202023207371756172650a	Python code
+14	23232048656164696e670a0a2d202a2a626f6c642a2a206974656d20776974682060636f6465600a	Markdown
+27	68747470733a2f2f6769746875622e636f6d2f506572736575732d436f6d707574696e672d4c4c432f68617270652f626c6f622f6d61696e2f7372632f6c69622e7273234c323135	URL
+11	54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e	English sentence
+5	6c696e65206f6e650d0a6c696e652074776f0d0a	CRLF line endings
+13	332e313431353920312c3030302c303030202d34322031652d39	numbers
+5	746162097365706172617465640976616c756573	tabs
+3	00017f	ASCII control characters are symbols
+5	611c621d631e641f66	U+001C to U+001F separate words
