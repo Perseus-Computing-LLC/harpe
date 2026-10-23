@@ -19,17 +19,18 @@ from .routing import (
 
 
 class HeuristicTokenCounter:
-    """Deterministic token counter based on whitespace, word boundaries, and character length."""
+    """Default token estimate, the same in Rust and Python: the larger of the number of pieces and a quarter of the
+    characters, rounded up. A piece is a run of characters other than whitespace and ASCII symbols, or one ASCII
+    symbol (an ASCII character other than a letter, digit, ``_`` or whitespace). Whitespace is what
+    ``str.isspace()`` accepts. Both test suites check ``tests/token_vectors.tsv``."""
 
-    _WORD_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
+    _SYMBOLS = re.escape("".join(c for c in map(chr, range(128)) if not (c.isalnum() or c == "_" or c.isspace())))
+    _PIECE_RE = re.compile(f"[^\\s{_SYMBOLS}]+|[{_SYMBOLS}]")
 
     def count_tokens(self, text: str) -> int:
         if not text:
             return 0
-        matches = self._WORD_RE.findall(text)
-        token_count = len(matches)
-        char_fallback = max(1, (len(text) + 3) // 4)
-        return max(token_count, char_fallback)
+        return max(len(self._PIECE_RE.findall(text)), (len(text) + 3) // 4)
 
 
 class ContextBudgetEngine(ContextSynthesizer):
@@ -223,12 +224,15 @@ class ContextBudgetEngine(ContextSynthesizer):
         if destination == "remote":
             withheld = [it for it in items_list if it.sensitivity == "confidential"]
             items_list = [it for it in items_list if it.sensitivity != "confidential"]
+        # Only items without a count are counted and copied. Hooks may change items in place,
+        # so with hooks every item is copied.
         resolved_items: List[ContextItem] = []
         for it in items_list:
-            tcount = it.token_count
-            if tcount <= 0:
-                tcount = self.token_counter.count_tokens(it.content)
-            resolved_items.append(it.model_copy(update={"token_count": tcount}))
+            if it.token_count <= 0:
+                it = it.model_copy(update={"token_count": self.token_counter.count_tokens(it.content)})
+            elif self.hooks:
+                it = it.model_copy()
+            resolved_items.append(it)
 
         for hook in self.hooks:
             hook.pre_prune(resolved_items)
