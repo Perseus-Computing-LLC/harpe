@@ -77,14 +77,14 @@ Try it without installing anything: [telarch.ai/harpe](https://telarch.ai/harpe)
 
 ## Measured
 
-Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) v0.1.0-alpha.5, built against harpe 0.1.0-alpha.6, with synthetic data on one shared server. Every run, its range and the command that reproduces it are on [telarch.ai/evidence](https://telarch.ai/evidence).
+Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) v0.1.0-alpha.7, built against harpe 0.1.0-alpha.6, with synthetic data on one EC2 m8azn.metal-12xl bare-metal server. Every run, its range and the command that reproduces it are on [telarch.ai/evidence](https://telarch.ai/evidence).
 
 | Measurement | Result |
 | --- | --- |
 | Fewer tokens sent over 100,000 simulated agent turns, 1,200-token budget per turn | 78.3% |
 | Turns that went over the budget | 0 |
-| Median call time, 10 items | 1.58 µs |
-| Median call time, 200 items | 34.54 µs |
+| Median call time, 10 items | 1.61 µs |
+| Median call time, 200 items | 26.03 µs |
 | Tokens removed to fit the budget, 200 items against 1,500 tokens | 69.5% |
 
 ## How it works
