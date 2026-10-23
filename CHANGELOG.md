@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] - 2026-10-23
+
 ### Changed
 - Rust and Python now count tokens with one default rule: the larger of the number of pieces (words and ASCII
   punctuation marks) and a quarter of the characters, rounded up. `cargo test` and `pytest` both check the 199 shared
