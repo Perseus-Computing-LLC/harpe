@@ -44,13 +44,17 @@ class DynamicToolCompressor:
         self,
         min_compress_chars: int = 800,
         preview_lines: int = 4,
+        max_preview_chars: int = 600,
     ) -> None:
         if min_compress_chars < 1:
             raise ValueError("min_compress_chars must be >= 1")
         if preview_lines < 1:
             raise ValueError("preview_lines must be >= 1")
+        if max_preview_chars < 1:
+            raise ValueError("max_preview_chars must be >= 1")
         self.min_compress_chars = min_compress_chars
         self.preview_lines = preview_lines
+        self.max_preview_chars = max_preview_chars
         self._store: Dict[str, CompressedToolOutput] = {}
 
     def maybe_compress(
@@ -79,6 +83,8 @@ class DynamicToolCompressor:
         head = "\n".join(lines[:self.preview_lines])
         tail = "\n".join(lines[-2:]) if raw_lines > self.preview_lines + 2 else ""
         summary_preview = f"{head}\n...\n{tail}" if tail else head
+        if len(summary_preview) > self.max_preview_chars:
+            summary_preview = summary_preview[:self.max_preview_chars].rstrip() + "\n..."
 
         artifact = CompressedToolOutput(
             ref_id=ref_id,
