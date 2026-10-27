@@ -51,6 +51,8 @@
 //! println!("Remaining tokens: {}", report.budget_remaining);
 //! ```
 
+pub mod state_ledger;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Pruning policies supported by the context synthesis engine.

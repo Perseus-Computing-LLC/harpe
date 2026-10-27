@@ -9,3 +9,5 @@ build/
 *.egg-info/
 .venv/
 env/
+# MemConflict corpus is fetched/cached here (40 MB, pinned SHA in memconflict_replay.py); never committed
+tests/data/Step4_4.jsonl

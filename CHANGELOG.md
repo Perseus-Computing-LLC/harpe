@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.9] - 2026-10-27
+
+Verified offline against the banked MemConflict Round 5 corpus (3,750 questions, `tests/test_memconflict_replay.py`):
+34 questions change, all static-conflict family questions whose gold answer says the sources disagree; the other
+3,716 ledger blocks are byte-identical to 0.1.0a8. No paid run.
+
+### Added
+- Python and Rust: `StateLedger` programmatic API. `Claim.seq` (insertion order; `(date, seq)` is time order, unit
+  ids are never sorted as strings), `StatePair.strength` (length-normalised overlap, `|shared|^2 / sqrt(|a|*|d|)`,
+  so a tight polarity flip outranks a long request sentence), `conflicts_for_entity(terms, since=, until=,
+  min_shared=, limit=)`, `timeline(terms)` and `latest_state(terms)`. `conflicts_for(question)` (the prompt path)
+  ranks by the same strength; its gate and header text are unchanged. Rust mirror `harpe::state_ledger` is
+  dependency-free and passes the same fixtures.
+
+### Fixed
+- `ProfileLedger`: a kinship noun owned by someone else ("her father has alternate weekends", "shared only with
+  the father" of a child) is no longer read as the user's own family statement, so it cannot become the
+  established record. "my dad" is always the user's.
+- `ProfileLedger`: a later "I have no X" after an inferred "has X" is marked `LATER CONFLICTING CLAIM`. Negations
+  the previous patterns did not read: "don't really have siblings", "no known / recorded / biological mother",
+  "no maternal records", "she passed away", "raised solely by my father", "the records list the mother as
+  unknown", "raised in an orphanage". A reported or denied negative ("a friend assumed I had no siblings, which
+  isn't true") is not the user's own "no".
+
+## [0.1.0-alpha.8] - 2026-10-27
+
+
 ### Added
 - Python, experimental: `ProfileLedger` keeps per-attribute timelines of the user's own statements (residence,
   career, relationship, work status, health, family members, name, birthplace, birth date, gender, education)

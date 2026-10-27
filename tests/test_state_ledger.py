@@ -80,3 +80,74 @@ def test_entity_form_has_no_question_gate():
     pairs = ledger().conflicts_for_entity(["integration", "tests", "socket", "events"])
     assert len(pairs) == 1 and isinstance(pairs[0], StatePair)
     assert ledger().conflicts_for_entity(["tests"]) == []
+
+
+# ---- 0.1.0a9: seq, length-normalised ranking, programmatic API ----------------------------------------------------
+
+WINDOW_UNITS = {
+    "10:2": ("user: I've completed the migration runbook for the billing service.", "2024-03-26"),
+    "2:1": ("user: I've never completed the migration runbook for the billing service, it is still a draft.",
+            "2024-03-26"),
+    "7:0": ("user: Yes, I've completed the migration runbook for the billing service and the payments service and "
+            "the ledger service and the archive service and the reporting service and the audit service too.",
+            "2024-05-01"),
+    "9:0": ("user: I usually deploy the billing service on Fridays.", ""),
+}
+
+
+def windowed():
+    led = StateLedger()
+    led.add_units(WINDOW_UNITS)
+    return led
+
+
+def test_seq_follows_insertion_not_unit_id_string():
+    led = windowed()
+    assert [c.seq for c in led.claims] == list(range(len(led.claims)))
+    first, second = led.claims[0], led.claims[1]
+    assert first.unit_id == "10:2" and second.unit_id == "2:1"
+    assert first.order < second.order  # same date: "10:2" came first even though "2:1" sorts first as a string
+
+
+def test_header_orders_same_date_pair_by_seq():
+    h = header(windowed().conflicts_for("Have I completed the migration runbook for the billing service?"))
+    assert h.splitlines()[0].endswith('"I\'ve completed the migration runbook for the billing service."')
+
+
+def test_ranking_prefers_tight_flip_over_long_sentence():
+    pairs = windowed().conflicts_for("Have I completed the migration runbook for the billing service?")
+    assert [p.affirm.unit_id for p in pairs] == ["10:2", "7:0", "9:0"]
+    assert pairs[0].strength > pairs[1].strength > pairs[2].strength
+    assert len(pairs[0].shared) == len(pairs[1].shared)  # same overlap; the shorter affirmation wins
+
+
+def test_entity_window_threshold_and_limit():
+    led = windowed()
+    terms = ["migration runbook", "billing service"]
+    assert [p.affirm.unit_id for p in led.conflicts_for_entity(terms)] == ["10:2", "7:0", "9:0"]
+    assert len(led.conflicts_for_entity(terms, limit=1)) == 1
+    # an undated claim ("9:0") passes any window; the dated ones are filtered
+    assert [p.affirm.unit_id for p in led.conflicts_for_entity(terms, until="2024-03-31")] == ["10:2", "9:0"]
+    assert led.conflicts_for_entity(terms, since="2024-04-01") == []  # the denial is outside the window
+    assert led.conflicts_for_entity(terms, min_shared=3) == [] or all(len(p.shared) >= 3 for p in led.conflicts_for_entity(terms, min_shared=3))
+    assert [p.affirm.unit_id for p in led.conflicts_for_entity(terms, min_shared=3)] == ["10:2", "7:0"]
+    assert led.conflicts_for_entity(terms, min_shared=5) == []
+
+
+def test_timeline_and_latest_state_by_date_then_seq():
+    led = windowed()
+    tl = led.timeline(["billing service"])
+    assert [c.unit_id for c in tl] == ["9:0", "10:2", "2:1", "7:0"]  # undated first, then (date, seq)
+    assert led.latest_state(["billing service"]).unit_id == "7:0"
+    assert led.latest_state(["billing service"], until="2024-03-31").unit_id == "2:1"
+    assert led.latest_state(["nothing here"]) is None
+    assert led.timeline(["migration"], since="2024-04-01") and all(c.date >= "2024-04-01" for c in led.timeline(["migration"], since="2024-04-01"))
+
+
+def test_api_is_pure_and_claims_are_frozen():
+    led = windowed()
+    a = [p.model_dump() for p in led.conflicts_for_entity(["migration runbook", "billing service"])]
+    b = [p.model_dump() for p in windowed().conflicts_for_entity(["migration runbook", "billing service"])]
+    assert a == b
+    with pytest.raises(Exception):
+        led.claims[0].seq = 99  # frozen model

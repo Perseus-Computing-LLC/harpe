@@ -15,11 +15,17 @@ even when retrieval selected only one; (3) the header it emits quotes the two st
 contains no instruction text at all - no "conflict", no "note", no "possible", no brackets.
 
 Everything here is lexical and deterministic. Freeze the file by SHA-256 before any paid inference.
+
+0.1.0a9 (after Round 8 reported null, 0.3384 vs 0.3384): claims carry ``seq`` (insertion order) so same-date or
+undated claims sort by arrival instead of by unit-id string; pairs rank by length-normalised overlap so a tight
+polarity flip outranks a long request sentence; ``conflicts_for_entity`` takes a date window, a threshold and a
+limit; ``latest_state`` and ``timeline`` expose the same index as data. The prompt path (``header``) is unchanged.
 """
 
 from __future__ import annotations
 
 import re
+import math
 from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
@@ -57,21 +63,40 @@ def content_words(text: str) -> frozenset:
 
 
 class Claim(BaseModel):
-    """One user sentence that affirms (+1) or denies (-1) a first-person action or state."""
+    """One user sentence that affirms (+1) or denies (-1) a first-person action or state.
+
+    ``seq`` is the claim's position in insertion order; ``(date, seq)`` is the ledger's time order. ``unit_id`` is
+    a caller string and never sorted on ("10:2" would precede "2:1")."""
 
     unit_id: str
     date: str = ""
     polarity: int = Field(ge=-1, le=1)
     text: str
     words: frozenset = Field(default_factory=frozenset)
+    seq: int = 0
 
     model_config = {"arbitrary_types_allowed": True, "frozen": True}
+
+    @property
+    def order(self) -> Tuple[str, int]:
+        return (self.date, self.seq)
 
 
 class StatePair(BaseModel):
     affirm: Claim
     deny: Claim
     shared: Tuple[str, ...]
+
+    @property
+    def strength(self) -> float:
+        """Length-normalised overlap: |shared|^2 / sqrt(|affirm.words| * |deny.words|). A two-word flip between two
+        short sentences scores higher than two words buried in a forty-word request."""
+        return pair_strength(len(self.shared), len(self.affirm.words), len(self.deny.words))
+
+
+def pair_strength(shared: int, affirm_words: int, deny_words: int) -> float:
+    denominator = math.sqrt(max(affirm_words, 1) * max(deny_words, 1))
+    return (shared * shared) / denominator
 
 
 def _user_sentences(text: str) -> Iterable[str]:
@@ -108,37 +133,67 @@ class StateLedger:
             if aff == den:  # neither, or both in one sentence: not a clean claim
                 continue
             self.claims.append(Claim(unit_id=unit_id, date=date or "", polarity=1 if aff else -1, text=sentence,
-                                     words=content_words(sentence)))
+                                     words=content_words(sentence), seq=len(self.claims)))
         return len(self.claims) - before
 
     def add_units(self, units: Mapping[str, Tuple[str, str]]) -> int:
         """``{unit_id: (text, date)}``. Returns total claims recorded."""
         return sum(self.add(uid, text, date) for uid, (text, date) in units.items())
 
-    def conflicts_for(self, question: str) -> List[StatePair]:
-        """Affirmation/denial pairs that share >= MIN_SHARED content words with each other and with the question.
-        Empty unless the question passes QUESTION_GATE. Deterministic: most shared words first, then index order."""
-        if not QUESTION_GATE.match(question.strip()):
+    def _pairs(self, q: frozenset, since: Optional[str], until: Optional[str], min_shared: int) -> List[StatePair]:
+        """Affirmation/denial pairs whose shared content words with ``q`` and with each other number at least
+        ``min_shared``. Ranked by ``pair_strength`` descending; ties keep ledger order (affirm seq, then deny seq)."""
+        if len(q) < min_shared:
             return []
-        q = content_words(question)
-        if len(q) < MIN_SHARED:
-            return []
-        aff = [(c, q & c.words) for c in self.claims if c.polarity == 1 and len(q & c.words) >= MIN_SHARED]
-        den = [(c, q & c.words) for c in self.claims if c.polarity == -1 and len(q & c.words) >= MIN_SHARED]
+        claims = [c for c in self.claims if _in_window(c.date, since, until)]
+        aff = [(c, q & c.words) for c in claims if c.polarity == 1 and len(q & c.words) >= min_shared]
+        den = [(c, q & c.words) for c in claims if c.polarity == -1 and len(q & c.words) >= min_shared]
         pairs: List[StatePair] = []
         for a, ao in aff:
             for d, do in den:
                 shared = ao & do
-                if len(shared) >= MIN_SHARED and a.unit_id != d.unit_id:
+                if len(shared) >= min_shared and a.unit_id != d.unit_id:
                     pairs.append(StatePair(affirm=a, deny=d, shared=tuple(sorted(shared))))
-        pairs.sort(key=lambda p: -len(p.shared))  # stable: ties keep index order
+        pairs.sort(key=lambda p: (-p.strength, p.affirm.seq, p.deny.seq))
         return pairs
 
-    def conflicts_for_entity(self, terms: Sequence[str]) -> List[StatePair]:
-        """Programmatic form: pairs about the given content terms, with no question gate. For callers that
-        already know what they are asking about (an API consumer, a planner), not for prompt injection."""
-        q = frozenset(w.lower() for w in terms)
-        return self.conflicts_for("Have I " + " ".join(sorted(q))) if len(q) >= MIN_SHARED else []
+    def conflicts_for(self, question: str) -> List[StatePair]:
+        """Prompt path. Pairs that share >= MIN_SHARED content words with each other and with the question.
+        Empty unless the question passes QUESTION_GATE. Deterministic: strongest pair first, then ledger order."""
+        if not QUESTION_GATE.match(question.strip()):
+            return []
+        return self._pairs(content_words(question), None, None, MIN_SHARED)
+
+    def conflicts_for_entity(self, terms: Sequence[str], *, since: Optional[str] = None, until: Optional[str] = None,
+                             min_shared: int = MIN_SHARED, limit: Optional[int] = None) -> List[StatePair]:
+        """Programmatic path: pairs about the given content terms, with no question gate. For callers that already
+        know what they are asking about (an API consumer, a planner), not for prompt injection. ``since``/``until``
+        are inclusive ISO dates applied to both claims; undated claims pass any window."""
+        pairs = self._pairs(_terms(terms), since, until, min_shared)
+        return pairs if limit is None else pairs[:limit]
+
+    def timeline(self, terms: Sequence[str], *, since: Optional[str] = None, until: Optional[str] = None,
+                 min_shared: int = 1) -> List[Claim]:
+        """Every claim of either polarity that shares >= ``min_shared`` content words with ``terms``, ordered by
+        ``(date, seq)`` - undated claims first, in arrival order."""
+        q = _terms(terms)
+        hits = [c for c in self.claims if len(q & c.words) >= min_shared and _in_window(c.date, since, until)]
+        return sorted(hits, key=lambda c: c.order)
+
+    def latest_state(self, terms: Sequence[str], *, until: Optional[str] = None, min_shared: int = 1) -> Optional[Claim]:
+        """The most recent claim on the topic, either polarity, by ``(date, seq)``; None when nothing matches."""
+        hits = self.timeline(terms, until=until, min_shared=min_shared)
+        return hits[-1] if hits else None
+
+
+def _terms(terms: Sequence[str]) -> frozenset:
+    return frozenset(w for t in terms for w in content_words(t))
+
+
+def _in_window(date: str, since: Optional[str], until: Optional[str]) -> bool:
+    if not date:
+        return True
+    return (since is None or date >= since) and (until is None or date <= until)
 
 
 def header(pairs: Sequence[StatePair], max_pairs: int = 2, max_words: int = 40) -> str:
@@ -149,7 +204,7 @@ def header(pairs: Sequence[StatePair], max_pairs: int = 2, max_words: int = 40) 
     lines: List[str] = []
     seen = set()
     for p in pairs[:max_pairs]:
-        for c in sorted((p.affirm, p.deny), key=lambda c: (c.date, c.unit_id)):
+        for c in sorted((p.affirm, p.deny), key=lambda c: c.order):
             key = (c.unit_id, c.text)
             if key in seen:
                 continue
@@ -162,4 +217,4 @@ def header(pairs: Sequence[StatePair], max_pairs: int = 2, max_words: int = 40) 
 
 
 __all__ = ["AFFIRM", "DENY", "QUESTION_GATE", "MIN_SHARED", "Claim", "StatePair", "StateLedger", "content_words",
-           "header"]
+           "header", "pair_strength"]
