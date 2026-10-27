@@ -163,3 +163,48 @@ def test_other_career_questions_get_no_employment_line():
     q = "What is the user's job title?"
     assert question_detail(q) != "employment"
     assert "Employment status implied" not in ledger.render(ledger.route(q), detail=question_detail(q))
+
+
+def test_no_persona_specific_string_literals():
+    """Assert that profile.py / profile_ledger.py contain zero persona-specific string literals from held-out personas."""
+    import ast
+    from pathlib import Path
+
+    harpe_src = Path(__file__).resolve().parent.parent / "src" / "harpe"
+    target_files = [harpe_src / "profile.py"]
+    if (harpe_src / "profile_ledger.py").exists():
+        target_files.append(harpe_src / "profile_ledger.py")
+
+    # Representative entities from held-out MemConflict personas (Personas 8-29)
+    held_out_entities = [
+        # Person names
+        "Alex Morgan", "Anthony Rodriguez", "Barbara Jackson", "Betty Hernandez",
+        "Daniel Lopez", "Donald Hernandez", "John Hernandez", "Michael Brown",
+        "Steven Wilson", "Richard Johnson", "Robert Miller", "Michelle Williams",
+        "Ananya Sharma", "Anil Kapoor", "Nikhil Rao", "Isabella Cruz",
+        # Companies and employers
+        "Hengda Manufacturing", "Blockchain Tech", "Western Development",
+        "Family Workshop", "Zhilian Education", "Baidu", "Small Manufacturing",
+        "Oriental Trade", "Southern Construction", "Cloud Data", "Green Energy",
+        "Central Investment", "New Energy Tech", "Huaxin Consulting",
+        # Cities and locations
+        "Lucerne", "Daejeon", "Bern", "Pune", "Shenzhen", "Valencia",
+        "Medina", "Antalya", "Amsterdam", "Ankara", "Bandung", "Bilbao",
+        "Bologna", "Cancun", "Cardiff", "Chengdu",
+    ]
+
+    for target_file in target_files:
+        assert target_file.exists(), f"Target file {target_file} not found"
+        tree = ast.parse(target_file.read_text(encoding="utf-8"))
+        literals = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+
+        for entity in held_out_entities:
+            for lit in literals:
+                assert entity.lower() not in lit.lower(), (
+                    f"Found persona-specific literal '{entity}' in {target_file.name}: {lit}"
+                )
+
