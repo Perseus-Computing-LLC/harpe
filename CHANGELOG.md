@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Repair set from the 2026-10-28 review. Each item is one commit on `fix/review-2026-10-28` and ships with a regression
+test; the version is not bumped.
+
+### Fixed
+
+- **H-01** `synthesize` rebuilt the included/pruned lists by item id, so two items sharing an id were both emitted when
+  either was selected (100 + 1,000 tokens under a 500 ceiling gave `consumed_tokens=1100`). Selection is tracked by
+  object identity everywhere, including the `DUO_ATTENTION` sink/local split, duplicate ids raise `ValueError` up
+  front, and the dead `final_unpinned_in_order` is gone.
+- **H-02** `_solve_knapsack_dp` quantised weights into 1,000 bins, so at a 200,000-token ceiling every item cost at
+  least 200 tokens and 1,500 one-token items left 99.5% of the budget unused. It is now an exact 0/1 knapsack on raw
+  token weights (1-D value row, `bytearray` parent rows) while `n × (capacity + 1) <= 5,000,000`, and a density-greedy
+  pass with slack fill above that. Direct solver tests plus `KNAPSACK_DP`/`DUO_ATTENTION` policy tests.
+- **H-03** `HeuristicTokenCounter` treated every non-ASCII character as a word letter. Each non-ASCII code point is
+  now one piece, runs of 8+ hex digits add one per three characters, and the `ceil(len/4)` floor stays; applied
+  identically in Rust. `tests/token_vectors.tsv` gains CJK, emoji, sha256, URL, UUID and commit-hash vectors with
+  the tiktoken `o200k_base` counts recorded beside them. New `harpe.tokenizers.TiktokenCounter` behind the
+  `[tiktoken]` extra.
+- **H-04** `resolve_dynamic_budget` capped the widened budget at an absolute 4,000 tokens, shrinking any budget above
+  that while the report said "expanded". The cap is a factor (`max_factor`; engine kwarg `max_dynamic_factor`)
+  clamped to `>= 1.0`, and `SynthesisReport.effective_budget` records the ceiling used on every path.
+- **M-01** When pinned, priority-0 or invariant items alone exceed the ceiling, `SynthesisReport.over_budget` and
+  `overflow_tokens` say so (Python and Rust). `synthesize(strict=True)` raises `BudgetOverflowError` (Python);
+  `synthesize_with(.., strict: true)` returns `HarpeError::BudgetOverflow` (Rust).
+- **M-02** `KNAPSACK_DP` and `DUO_ATTENTION` scored recency against `time.time()`, so the same inputs could select
+  differently hours apart. `synthesize(now=...)` is threaded to `_compute_item_utility`; the default is the newest
+  `created_at` among the items and is reported as `SynthesisReport.reference_time`.
+- **M-03** `BehavioralGovernor`: a revoked invariant without a `key` suppressed every action (empty string is a
+  substring of everything); only a non-empty stripped key matches. Blocked patterns collapse whitespace and accept
+  the recursive flag in any group or order (`rm -r -f /`, `rm -fr ~`, `rm -rf *`, `--recursive --force`), and the
+  docstring says they are a last-resort heuristic, not a sandbox.
+- **M-04** Rust `content_words` split on every non-lowercase character and produced `tests`, `socket`, `events` and
+  `caf` where Python's `\b[a-z]{3,}\b` produces nothing. It now matches; `tests/content_word_vectors.tsv` is
+  checked by both suites.
+- **M-05** `DynamicToolCompressor` kept every artifact for the life of the process. The store is an
+  `LRUArtifactStore` capped by raw bytes (`store_max_bytes`, default 64 MiB); evicted refs restore as `None`.
+
+### Changed
+
+- **R-1** Policy selection moved out of `synthesize` into `_select_unpinned(policy, items, capacity, ...)`; the
+  `synthesize` body is 75 lines, and an unknown policy raises `ValueError` instead of running `LOWEST_PRIORITY`.
+- README separates the Rust greedy latency numbers from the Python knapsack and says the "zero overruns" figure was
+  measured with the crate's own `HeuristicTokenCounter`.
+- `pyproject.toml`: optional extra `tiktoken`.
+
+
 ## [0.1.0-alpha.9] - 2026-10-27
 
 Verified offline against the banked MemConflict Round 5 corpus (3,750 questions, `tests/test_memconflict_replay.py`):

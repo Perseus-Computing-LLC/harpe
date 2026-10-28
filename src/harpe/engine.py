@@ -25,9 +25,10 @@ class HeuristicTokenCounter:
     ``len // 3`` extras on top of the piece it sits in, so hashes and ids cost about one token per three
     characters. Whitespace is what ``str.isspace()`` accepts. Both test suites check ``tests/token_vectors.tsv``.
 
-    Measured against tiktoken ``o200k_base`` this still undercounts emoji (about 2 tokens each) and hex hashes
-    (about 1 token per 1.8 characters) and overcounts CJK (about 0.7 tokens per character); it is a floor, not a
-    tokenizer. Use :class:`harpe.tokenizers.TiktokenCounter` or your model's tokenizer for exact counts."""
+    Measured against tiktoken ``o200k_base`` on the shared vectors this undercounts emoji and hex ids (about 0.6x)
+    and overcounts CJK (about 1.3-1.4x) and English prose (about 1.2x); 1.11x over all 208 vectors. It is an
+    estimate, not a tokenizer. Use :class:`harpe.tokenizers.TiktokenCounter` or your model's tokenizer for exact
+    counts."""
 
     _PIECE_RE = re.compile(r"[A-Za-z0-9_]+|\S")
     _HEX_RUN_RE = re.compile(r"[0-9a-fA-F]{8,}")
