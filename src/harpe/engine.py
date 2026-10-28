@@ -172,7 +172,7 @@ class ContextBudgetEngine(ContextSynthesizer):
         intent: Optional[Union[QueryIntent, str]] = None,
         dynamic_budget: bool = False,
         aggregation_factor: float = 2.0,
-        max_dynamic_budget: int = 4000,
+        max_dynamic_factor: float = 2.0,
         temporal_boost: float = 1.15,
         persona_item: Optional[Union[ContextItem, Dict[str, Any]]] = None,
     ) -> SynthesisReport:
@@ -181,7 +181,9 @@ class ContextBudgetEngine(ContextSynthesizer):
         ``prune_policy``: alias for ``policy`` for ergonomics across benchmarks.
         ``query``: optional prompt/question string for automatic intent detection.
         ``intent``: explicit QueryIntent override (multi_session_aggregation, temporal, preference, factoid_single).
-        ``dynamic_budget``: if True and intent is multi-session aggregation, expands knapsack budget capacity.
+        ``dynamic_budget``: if True and intent is multi-session aggregation, widens ``total_budget`` by
+        ``min(aggregation_factor, max_dynamic_factor)`` (never below 1.0, so never smaller than ``budget``). The
+        ceiling actually used is reported as ``SynthesisReport.effective_budget`` on every path.
         ``temporal_boost``: utility weight multiplier (default 1.15x) for items with temporal anchors when query is temporal.
         ``persona_item``: optional compact user persona/preference slot injected at priority=0 when preference intent occurs.
         """
@@ -205,7 +207,7 @@ class ContextBudgetEngine(ContextSynthesizer):
                 budget,
                 evaluated_intent,
                 aggregation_factor=aggregation_factor,
-                max_budget=max_dynamic_budget,
+                max_factor=max_dynamic_factor,
             )
             dynamic_budget_expanded = True
 
@@ -288,6 +290,7 @@ class ContextBudgetEngine(ContextSynthesizer):
                 policy_applied=policy,
                 query_intent=evaluated_intent.value if evaluated_intent else None,
                 dynamic_budget_expanded=dynamic_budget_expanded,
+                effective_budget=available_capacity,
                 dimension_counts=dim_counts,
                 dimension_tokens=dim_tokens,
             )
@@ -466,6 +469,7 @@ class ContextBudgetEngine(ContextSynthesizer):
             policy_applied=policy,
             query_intent=evaluated_intent.value if evaluated_intent else None,
             dynamic_budget_expanded=dynamic_budget_expanded,
+            effective_budget=available_capacity,
             dimension_counts=dim_counts,
             dimension_tokens=dim_tokens,
         )

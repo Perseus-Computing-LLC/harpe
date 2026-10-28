@@ -137,6 +137,12 @@ class SynthesisReport(BaseModel):
         default=False,
         description="True if the knapsack budget was dynamically expanded for multi-session aggregation.",
     )
+    effective_budget: int = Field(
+        default=0,
+        ge=0,
+        description="The available-context ceiling the selection was made against, after any dynamic expansion. "
+        "This is the number consumed_tokens is bounded by, not the caller's TokenBudget.total_budget.",
+    )
     dimension_counts: Dict[str, int] = Field(
         default_factory=dict,
         description="Breakdown of included items by cognitive dimension.",
