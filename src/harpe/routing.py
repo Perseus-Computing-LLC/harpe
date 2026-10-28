@@ -81,24 +81,29 @@ def is_preference_query(query: str) -> bool:
     return bool(_PREFERENCE_PATTERN.search(query)) if query else False
 
 
+_AGGREGATION_INTENTS = frozenset({"multi_session_aggregation", "aggregation", "multi-session"})
+
+
 def resolve_dynamic_budget(
     base_budget: TokenBudget,
     intent: Union[QueryIntent, str],
     aggregation_factor: float = 2.0,
-    max_budget: int = 4000,
+    max_factor: float = 2.0,
 ) -> TokenBudget:
-    """Dynamically adjust token budget for aggregation queries while maintaining strict bounds.
+    """Widen ``total_budget`` for aggregation queries by ``min(aggregation_factor, max_factor)``, never below 1.0,
+    so the result is never smaller than the caller's budget. Other intents return ``base_budget`` unchanged.
 
-    Aggregation/multi-session queries require assembling dispersed fragments across multiple sessions.
-    Dynamically expanding the available budget prevents knapsack starvation without inflating single-session costs.
+    Aggregation/multi-session queries assemble fragments spread across sessions, and a budget sized for one
+    session starves the knapsack. The cap is a factor of the caller's budget rather than an absolute token count:
+    an absolute cap (formerly 4000) silently halved any budget already above it while the report said "expanded".
+    The reserves are copied as they are; only ``total_budget`` grows.
     """
     intent_str = str(intent.value if isinstance(intent, QueryIntent) else intent).lower()
-
-    if intent_str in ("multi_session_aggregation", "aggregation", "multi-session"):
-        expanded_total = min(int(base_budget.total_budget * aggregation_factor), max_budget)
-        return base_budget.model_copy(update={"total_budget": expanded_total})
-
-    return base_budget
+    if intent_str not in _AGGREGATION_INTENTS:
+        return base_budget
+    # >= 1.0: expansion can only grow the budget, whatever the caller passed for the factors.
+    factor = max(1.0, min(aggregation_factor, max_factor))
+    return base_budget.model_copy(update={"total_budget": int(base_budget.total_budget * factor)})
 
 
 def normalize_temporal_chunk(

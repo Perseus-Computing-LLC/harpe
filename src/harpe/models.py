@@ -137,6 +137,27 @@ class SynthesisReport(BaseModel):
         default=False,
         description="True if the knapsack budget was dynamically expanded for multi-session aggregation.",
     )
+    over_budget: bool = Field(
+        default=False,
+        description="True when the pinned, priority-0 and invariant items alone exceed effective_budget. They are "
+        "still all included (pinned items are never pruned), so consumed_tokens is above the ceiling.",
+    )
+    overflow_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="How many tokens consumed_tokens is above effective_budget; 0 unless over_budget.",
+    )
+    effective_budget: int = Field(
+        default=0,
+        ge=0,
+        description="The available-context ceiling the selection was made against, after any dynamic expansion. "
+        "This is the number consumed_tokens is bounded by, not the caller's TokenBudget.total_budget.",
+    )
+    reference_time: Optional[float] = Field(
+        default=None,
+        description="The timestamp recency was measured from (the caller's `now`, else the newest created_at among "
+        "the items). None when there were no items. Never the wall clock, so a replay gives the same selection.",
+    )
     dimension_counts: Dict[str, int] = Field(
         default_factory=dict,
         description="Breakdown of included items by cognitive dimension.",

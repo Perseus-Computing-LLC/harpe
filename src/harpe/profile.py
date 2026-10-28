@@ -40,6 +40,18 @@ _THIRD_PARTY = re.compile(
     r"siblings?|friends?|partner|wife|husband|spouse|girlfriend|boyfriend|sons?|daughters?|kids?|child|children|"
     r"colleagues?|coworkers?|co-workers?|boss|manager|neighbou?rs?|cousins?|aunt|uncle|grand\w+|roommate|flatmate|"
     r"fianc\w+|ex))\b", re.I)
+# A kinship noun owned by someone else ("her father", "Claire's dad") is theirs, not the user's. Only consulted for a
+# bare noun; "my dad" is always the user's. Sentence-opening contractions ("There's") are not names.
+_OTHERS_POSSESSIVE = re.compile(r"(?:\b(?:her|his|their|its)|\b(?!(?:There|It|That|This|He|She|What|Here|Let|Who|Where|"
+                                r"How|Everyone|Someone|Everything|Nothing|Something)['\u2019])[A-Z][a-z]+['\u2019]s)\s+(?:\w+\s+)?$")
+# "the father" is someone else's only when the sentence brings in a third person ("...when Claire is with him");
+# "my birth records list the mother as unknown" is about the user.
+_THE_KIN = re.compile(r"\bthe\s+(?:\w+\s+)?$")
+_OTHER_PERSON = re.compile(r"\b(?:her|his|their|him|them|she|he|they)\b|(?<!^)(?<![.!?]\s)\b[A-Z][a-z]+\b")
+# "a friend assumed I didn't have siblings, which isn't true": a reported or denied negative is not the user's own "no".
+_REPORTED_NEGATIVE = re.compile(r"\b(?:assumed|thought|figured|believed|guessed|claimed|said|says|insisted)\s+(?:that\s+)?I\b|"
+                                r"\b(?:isn['\u2019]t|is\s+not|wasn['\u2019]t|was\s+not)\s+true\b|"
+                                r"\bwhich\s+(?:isn['\u2019]t|is\s+not)\s+(?:true|the\s+case)\b", re.I)
 _SELF = re.compile(r"\b(?:i|i'm|i\u2019m|im|i've|i\u2019ve|i'd|we|we're|we've|me|myself)\b", re.I)
 
 
@@ -130,16 +142,34 @@ _DEGREE_LEVELS = (("doctorate", r"\b(?:ph\.?\s?d|doctorate|doctoral|doctor\s+of)
                   ("bachelor", r"\b(?:bachelor'?s?|b\.?sc|b\.?s\.|b\.?a\.|undergrad(?:uate)?\s+degree|bachelor\s+of)\b"),
                   ("associate", r"\bassociate'?s?\s+degree\b"),
                   ("high-school", r"\bhigh\s+school\s+(?:diploma|graduate)\b"))
+# "I have no X" in the user's own words. Straight and curly apostrophes both occur in transcripts ("don't", "don\u2019t");
+# a qualifier may sit between the negation and the noun ("no known biological mother", "don't really have siblings").
+_NEG_HAVE = r"(?:don['\u2019]?t|do\s+not|didn['\u2019]?t|did\s+not|never|haven['\u2019]?t|have\s+not)\s+(?:really\s+|actually\s+)?(?:have|had|knew|know|known)"
+_QUAL = r"(?:(?:living|recorded|known|biological|birth|legal|surviving|real|adoptive|present|named|listed)\s+(?:or\s+)?)*"
 _HAS_NONE = {
-    "siblings": re.compile(r"\b(?:only\s+child|no\s+(?:brothers|sisters|siblings)|(?:don'?t|do\s+not|never)\s+(?:have|had)"
-                           r"\s+(?:any\s+)?(?:siblings|brothers|sisters)|without\s+(?:any\s+)?siblings)\b", re.I),
-    "mother": re.compile(r"\b(?:(?:don'?t|do\s+not|never)\s+(?:have|had|knew|know)\s+(?:a\s+|my\s+)?(?:mother|mom|mum)|"
-                         r"without\s+(?:a\s+|my\s+)?(?:mother|mom|mum)|not\s+knowing\s+my\s+(?:mother|mom|mum)|"
-                         r"lost\s+my\s+(?:mother|mom|mum)|(?:mother|mom|mum)\s+(?:passed|died)|no\s+(?:mother|mom|mum)\b|orphan)",
-                         re.I),
-    "father": re.compile(r"\b(?:(?:don'?t|do\s+not|never)\s+(?:have|had|knew|know)\s+(?:a\s+|my\s+)?(?:father|dad)|"
-                         r"without\s+(?:a\s+|my\s+)?(?:father|dad)|not\s+knowing\s+my\s+(?:father|dad)|"
-                         r"lost\s+my\s+(?:father|dad)|(?:father|dad)\s+(?:passed|died)|no\s+(?:father|dad)\b|orphan)", re.I),
+    "siblings": re.compile(r"\b(?:only\s+child|no\s+(?:brothers|sisters|siblings)|" + _NEG_HAVE +
+                           r"\s+(?:any\s+)?" + _QUAL + r"(?:siblings|brothers|sisters)|without\s+(?:any\s+)?siblings|"
+                           r"not\s+having\s+(?:any\s+)?siblings)\b", re.I),
+    "mother": re.compile(r"\b(?:" + _NEG_HAVE + r"\s+(?:a\s+|my\s+|any\s+)?" + _QUAL + r"(?:mother|mom|mum|maternal\s+(?:parent|relationship))|"
+                         r"without\s+(?:a\s+|my\s+|any\s+)?" + _QUAL + r"(?:mother|mom|mum|maternal\s+(?:parent|relationship))|"
+                         r"not\s+knowing\s+my\s+(?:mother|mom|mum)|lost\s+my\s+(?:mother|mom|mum)|"
+                         r"(?:mother|mom|mum|she)\s+(?:passed(?:\s+away)?|died|is\s+deceased|has\s+passed)\b|"
+                         r"no\s+" + _QUAL + r"(?:mother|mom|mum|maternal\s+(?:parent|relationship|records?))\b|"
+                         r"no\s+record\s+of\s+(?:a\s+|my\s+)?" + _QUAL + r"(?:mother|mom|mum)|"
+                         r"raised\s+(?:solely|only|entirely)\s+by\s+(?:my\s+)?(?:father|dad)\b|"
+                         r"(?:mother|mom|mum)\s+(?:is\s+|was\s+)?(?:listed|recorded|registered)\s+as\s+['\u2018\u2019\"]?unknown|"
+                         r"(?:lists?|listed|records?|recorded)\s+(?:the|my)\s+(?:mother|mom|mum)\s+as\s+['\u2018\u2019\"]?unknown|"
+                         r"both\s+(?:birth\s+|biological\s+)?parents\s+(?:were|are|being)\s+absent|orphan)", re.I),
+    "father": re.compile(r"\b(?:" + _NEG_HAVE + r"\s+(?:a\s+|my\s+|any\s+)?" + _QUAL + r"(?:father|dad|paternal\s+(?:parent|relationship))|"
+                         r"without\s+(?:a\s+|my\s+|any\s+)?" + _QUAL + r"(?:father|dad|paternal\s+(?:parent|relationship))|"
+                         r"not\s+knowing\s+my\s+(?:father|dad)|lost\s+my\s+(?:father|dad)|"
+                         r"(?:father|dad|he)\s+(?:passed(?:\s+away)?|died|is\s+deceased|has\s+passed)\b|"
+                         r"no\s+" + _QUAL + r"(?:father|dad|paternal\s+(?:parent|relationship|records?))\b|"
+                         r"no\s+record\s+of\s+(?:a\s+|my\s+)?" + _QUAL + r"(?:father|dad)|"
+                         r"raised\s+(?:solely|only|entirely)\s+by\s+(?:my\s+)?(?:mother|mom|mum)\b|"
+                         r"(?:father|dad)\s+(?:is\s+|was\s+)?(?:listed|recorded|registered)\s+as\s+['\u2018\u2019\"]?unknown|"
+                         r"(?:lists?|listed|records?|recorded)\s+(?:the|my)\s+(?:father|dad)\s+as\s+['\u2018\u2019\"]?unknown|"
+                         r"both\s+(?:birth\s+|biological\s+)?parents\s+(?:were|are|being)\s+absent|orphan)", re.I),
 }
 _SIBLING_COUNT = re.compile(r"\b(zero|no|one|two|three|four|five|six|\d|a|an|single)\s+(?:older\s+|younger\s+|little\s+|"
                             r"big\s+)?(?:siblings?|brothers?|sisters?)\b|\b(twins?)\b", re.I)
@@ -165,8 +195,9 @@ def _degree_value(text: str, start: int) -> FrozenSet[str]:
 def _family_value(kind: str) -> Callable[[str, int], FrozenSet[str]]:
     def read(text: str, start: int) -> FrozenSet[str]:
         values = set()
-        values.add("has:no" if _HAS_NONE[kind].search(text) else "has:yes")
-        if kind == "siblings":
+        reported = bool(_REPORTED_NEGATIVE.search(text))
+        values.add("has:no" if _HAS_NONE[kind].search(text) and not reported else "has:yes")
+        if kind == "siblings" and not reported:
             for word, twin in _SIBLING_COUNT.findall(text):
                 raw = str(word or twin).lower()
                 number = _NUMBER_WORDS.get(raw, raw)
@@ -548,13 +579,15 @@ DEFAULT_ATTRIBUTES: Tuple[AttributeSpec, ...] = (
     ),
     AttributeSpec(
         "mother", "The user's mother", False,
-        statements=(r"\bmy\s+(?:\w+\s+)?(?:mom|mother|mum|mama|mommy)\b", r"\b(?:mother|mom|mum)\b"),
+        statements=(r"\bmy\s+(?:\w+\s+)?(?:mom|mother|mum|mama|mommy)\b", r"\b(?:mother|mom|mum|maternal)\b",
+                    r"\braised\s+(?:solely|only|entirely)\s+by\s+(?:my\s+)?(?:father|dad)\b"),
         question=(r"\b(?:mother|mom|mum)\b",),
         value=_family_value("mother"),
     ),
     AttributeSpec(
         "father", "The user's father", False,
-        statements=(r"\bmy\s+(?:\w+\s+)?(?:dad|father|papa|daddy|pop)\b", r"\b(?:father|dad)\b"),
+        statements=(r"\bmy\s+(?:\w+\s+)?(?:dad|father|papa|daddy|pop)\b", r"\b(?:father|dad|paternal)\b",
+                    r"\braised\s+(?:solely|only|entirely)\s+by\s+(?:my\s+)?(?:mother|mom|mum)\b"),
         question=(r"\b(?:father|dad)\b",),
         value=_family_value("father"),
     ),
@@ -615,7 +648,16 @@ class ProfileLedger:
                     continue
                 match = None
                 for candidate in self._statement_re[name].finditer(sentence):
-                    if name in _FAMILY or not _about_someone_else(sentence, candidate.start()):
+                    if name in _FAMILY:
+                        # Family statements skip the subject test (they are rarely first-person), except that a kinship
+                        # noun owned by someone else is theirs: "Claire lives with me ... her father has weekends".
+                        if not candidate.group(0).lower().startswith("my"):
+                            before = sentence[:candidate.start()]
+                            if _OTHERS_POSSESSIVE.search(before) or (_THE_KIN.search(before) and _OTHER_PERSON.search(sentence)):
+                                continue
+                        match = candidate
+                        break
+                    if not _about_someone_else(sentence, candidate.start()):
                         match = candidate
                         break
                 if match is None:

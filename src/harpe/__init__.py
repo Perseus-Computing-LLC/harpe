@@ -2,8 +2,9 @@
 
 from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
-from .engine import ContextBudgetEngine, HeuristicTokenCounter
-from .dtoc import CompressedToolOutput, DynamicToolCompressor
+from .engine import BudgetOverflowError, ContextBudgetEngine, HeuristicTokenCounter
+from .tokenizers import TiktokenCounter, tiktoken_available
+from .dtoc import CompressedToolOutput, DynamicToolCompressor, LRUArtifactStore
 from .prompts import format_official_cot_prompt, format_qa_prompt
 from .conflicts import Conflict, annotate_conflicts, conflict_note, find_conflicts
 from .routing import (
@@ -78,7 +79,7 @@ from .profile import (
     question_detail,
 )
 
-__version__ = "0.1.0a8"
+__version__ = "0.1.0a9"
 
 __all__ = [
     "CognitiveDimension",
@@ -89,10 +90,14 @@ __all__ = [
     "ContextSynthesizer",
     "PruningHook",
     "TokenCounter",
+    "BudgetOverflowError",
     "ContextBudgetEngine",
     "HeuristicTokenCounter",
+    "TiktokenCounter",
+    "tiktoken_available",
     "CompressedToolOutput",
     "DynamicToolCompressor",
+    "LRUArtifactStore",
     "format_official_cot_prompt",
     "format_qa_prompt",
     "Conflict",

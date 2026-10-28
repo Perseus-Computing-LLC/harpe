@@ -51,6 +51,8 @@
 //! println!("Remaining tokens: {}", report.budget_remaining);
 //! ```
 
+pub mod state_ledger;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Pruning policies supported by the context synthesis engine.
@@ -165,6 +167,11 @@ pub struct SynthesisReport {
     pub pruned_tokens: usize,
     /// The pruning strategy that was applied during synthesis.
     pub policy_applied: PrunePolicy,
+    /// True when the pinned and priority-0 items alone exceed the available context. They are
+    /// still all included (pinned items are never pruned), so `consumed_tokens` is above the ceiling.
+    pub over_budget: bool,
+    /// How many tokens `consumed_tokens` is above the available context; 0 unless `over_budget`.
+    pub overflow_tokens: usize,
 }
 
 /// Errors returned during context synthesis and budgeting operations.
@@ -212,20 +219,26 @@ pub trait ContextSynthesizer: Send + Sync {
     ) -> Result<SynthesisReport, HarpeError>;
 }
 
-/// Default token estimate, the same in Rust and Python: the larger of the number of pieces and a
-/// quarter of the characters, rounded up. A piece is a run of characters other than whitespace and
-/// ASCII symbols, or one ASCII symbol (an ASCII character other than a letter, digit, `_` or
-/// whitespace). Whitespace is what Python's `str.isspace()` accepts: Unicode `White_Space` plus
-/// U+001C to U+001F. Both test suites check `tests/token_vectors.tsv`.
+/// Default token estimate, the same in Rust and Python: the larger of (pieces + hex extras) and a
+/// quarter of the characters, rounded up. A piece is a run of ASCII letters, digits and underscores,
+/// or any single other non-whitespace character: an ASCII symbol or any non-ASCII code point, so
+/// CJK text, emoji and accented letters count one per code point instead of joining a word. Every
+/// maximal run of 8 or more hex digits adds `len / 3` extras on top of the piece it sits in, so
+/// hashes and ids cost about one token per three characters. Whitespace is what Python's
+/// `str.isspace()` accepts: Unicode `White_Space` plus U+001C to U+001F. Both test suites check
+/// `tests/token_vectors.tsv`. It is a floor, not a tokenizer: pass your model's [`TokenCounter`]
+/// for exact counts.
 #[derive(Debug, Default, Clone)]
 pub struct HeuristicTokenCounter;
 
 impl HeuristicTokenCounter {
     // How each ASCII character counts. Any other character is a space if it is Unicode
-    // `White_Space`, and part of a word otherwise.
+    // `White_Space`, and otherwise a symbol: one piece on its own that ends any word run.
     const WORD: u8 = 0;
     const SPACE: u8 = 1;
     const SYMBOL: u8 = 2;
+    // Runs of at least this many hex digits get the extra per-3-characters charge.
+    const HEX_RUN_MIN: usize = 8;
     const ASCII_CLASS: [u8; 128] = {
         let mut class = [Self::SYMBOL; 128];
         let mut b = 0;
@@ -244,19 +257,32 @@ impl HeuristicTokenCounter {
 
 impl TokenCounter for HeuristicTokenCounter {
     fn count_tokens(&self, text: &str) -> usize {
-        let (mut pieces, mut chars, mut in_word) = (0usize, 0usize, false);
+        let (mut pieces, mut chars, mut in_word, mut hex_run) = (0usize, 0usize, false, 0usize);
         for c in text.chars() {
+            // Hex runs are tracked across piece boundaries exactly like Python's `[0-9a-fA-F]{8,}`:
+            // a maximal run inside a longer word still counts.
+            if c.is_ascii_hexdigit() {
+                hex_run += 1;
+            } else {
+                if hex_run >= Self::HEX_RUN_MIN {
+                    pieces += hex_run / 3;
+                }
+                hex_run = 0;
+            }
             let class = if c.is_ascii() {
                 Self::ASCII_CLASS[c as usize]
             } else if c.is_whitespace() {
                 Self::SPACE
             } else {
-                Self::WORD
+                Self::SYMBOL
             };
             let starts_piece = class == Self::SYMBOL || (class == Self::WORD && !in_word);
             pieces += usize::from(starts_piece);
             chars += 1;
             in_word = class == Self::WORD;
+        }
+        if hex_run >= Self::HEX_RUN_MIN {
+            pieces += hex_run / 3;
         }
         pieces.max(chars.div_ceil(4))
     }
@@ -280,14 +306,17 @@ impl ContextBudgetEngine {
     pub fn new(counter: Box<dyn TokenCounter>) -> Self {
         Self { counter }
     }
-}
 
-impl ContextSynthesizer for ContextBudgetEngine {
-    fn synthesize(
+    /// [`ContextSynthesizer::synthesize`] with a `strict` switch. Pinned and priority-0 items are
+    /// never pruned, so when they alone exceed the available context the report comes back with
+    /// `over_budget` set and `consumed_tokens` above the ceiling. With `strict`, that case is
+    /// [`HarpeError::BudgetOverflow`] instead of a report.
+    pub fn synthesize_with(
         &self,
         items: &[ContextItem],
         budget: &TokenBudget,
         policy: PrunePolicy,
+        strict: bool,
     ) -> Result<SynthesisReport, HarpeError> {
         let mut resolved: Vec<ContextItem> = Vec::with_capacity(items.len());
         for it in items {
@@ -313,6 +342,14 @@ impl ContextSynthesizer for ContextBudgetEngine {
         let pinned_tokens: usize = pinned.iter().map(|it| it.token_count).sum();
 
         if pinned_tokens >= capacity {
+            // Nothing else fits. Say so in the report instead of hiding it behind
+            // budget_remaining = 0; strict callers get the error the enum always had for this.
+            let overflow = pinned_tokens - capacity;
+            if strict && overflow > 0 {
+                return Err(HarpeError::BudgetOverflow(format!(
+                    "pinned items use {pinned_tokens} tokens against a ceiling of {capacity}: {overflow} over"
+                )));
+            }
             let pruned_tokens = unpinned.iter().map(|it| it.token_count).sum();
             return Ok(SynthesisReport {
                 included_items: pinned,
@@ -321,6 +358,8 @@ impl ContextSynthesizer for ContextBudgetEngine {
                 budget_remaining: 0,
                 pruned_tokens,
                 policy_applied: policy,
+                over_budget: overflow > 0,
+                overflow_tokens: overflow,
             });
         }
 
@@ -386,7 +425,21 @@ impl ContextSynthesizer for ContextBudgetEngine {
             budget_remaining: capacity.saturating_sub(consumed),
             pruned_tokens: pruned,
             policy_applied: policy,
+            over_budget: false,
+            overflow_tokens: 0,
         })
+    }
+}
+
+impl ContextSynthesizer for ContextBudgetEngine {
+    /// Non-strict synthesis: see [`ContextBudgetEngine::synthesize_with`].
+    fn synthesize(
+        &self,
+        items: &[ContextItem],
+        budget: &TokenBudget,
+        policy: PrunePolicy,
+    ) -> Result<SynthesisReport, HarpeError> {
+        self.synthesize_with(items, budget, policy, false)
     }
 }
 
@@ -436,7 +489,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 199);
+        assert_eq!(checked, 208);
     }
 
     #[test]
@@ -482,5 +535,55 @@ mod tests {
         assert_eq!(report.pruned_items[0].id, "low");
         assert_eq!(report.consumed_tokens, 50);
         assert_eq!(report.budget_remaining, 50);
+        assert!(!report.over_budget);
+        assert_eq!(report.overflow_tokens, 0);
+    }
+
+    #[test]
+    fn test_pinned_overflow_is_reported_and_strict_refuses_it() {
+        let engine = ContextBudgetEngine::default();
+        let budget = TokenBudget::new(100);
+        let big_pin = ContextItem {
+            id: "pin".into(),
+            role: "system".into(),
+            content: "Huge system prompt".into(),
+            token_count: 150,
+            priority: 0,
+            pinned: true,
+            created_at: 1.0,
+        };
+        let other = ContextItem {
+            id: "other".into(),
+            role: "user".into(),
+            content: "Anything".into(),
+            token_count: 10,
+            priority: 50,
+            pinned: false,
+            created_at: 2.0,
+        };
+        let items = vec![big_pin, other];
+
+        let report = engine
+            .synthesize(&items, &budget, PrunePolicy::LowestPriority)
+            .unwrap();
+        assert!(report.over_budget);
+        assert_eq!(report.overflow_tokens, 50);
+        assert_eq!(report.consumed_tokens, 150);
+        assert_eq!(report.budget_remaining, 0);
+        assert_eq!(report.included_items.len(), 1);
+        assert_eq!(report.pruned_items.len(), 1);
+
+        match engine.synthesize_with(&items, &budget, PrunePolicy::LowestPriority, true) {
+            Err(HarpeError::BudgetOverflow(msg)) => assert!(msg.contains("50 over"), "{msg}"),
+            other => panic!("expected BudgetOverflow, got {other:?}"),
+        }
+
+        // Pinned exactly at capacity is full, not over: strict still returns a report.
+        let exact = TokenBudget::new(150);
+        let report = engine
+            .synthesize_with(&items, &exact, PrunePolicy::LowestPriority, true)
+            .unwrap();
+        assert!(!report.over_budget);
+        assert_eq!(report.overflow_tokens, 0);
     }
 }

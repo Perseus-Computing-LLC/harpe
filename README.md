@@ -79,7 +79,9 @@ Try it without installing anything: [telarch.ai/harpe](https://telarch.ai/harpe)
 
 Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) v0.1.0-alpha.8, built against harpe 0.1.0-alpha.7, with synthetic data on one EC2 m8azn.metal-12xl bare-metal server. Every run, its range and the command that reproduces it are on [telarch.ai/evidence](https://telarch.ai/evidence).
 
-| Measurement | Result |
+All of these numbers are for the **Rust crate's greedy `LowestPriority` policy** (`knapsack_cost_curve` in telarch-benchmarks). The Python `KNAPSACK_DP` and `DUO_ATTENTION` policies solve an exact 0/1 knapsack and have not been timed on this hardware; expect milliseconds, not microseconds, for hundreds of items against a large budget.
+
+| Measurement (Rust, greedy `LowestPriority`) | Result |
 | --- | --- |
 | Fewer tokens sent over 100,000 simulated agent turns, 1,200-token budget per turn | 78.3% |
 | Turns that went over the budget | 0 |
@@ -87,21 +89,24 @@ Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computin
 | Median call time, 200 items | 25.73 µs |
 | Tokens removed to fit the budget, 200 items against 1,500 tokens | 78.0% |
 
+"Turns that went over the budget: 0" was measured with the crate's own `HeuristicTokenCounter` counting both the items and the ceiling, so it shows the selection never exceeds the counts it is given. It says nothing about what a provider's tokenizer would charge for the same text; the heuristic undercounts emoji and hex ids and overcounts CJK and prose against tiktoken `o200k_base` (see Limits). Pinned items that alone exceed the ceiling are reported as `over_budget` rather than pruned; none of the synthetic turns hit that case.
+
 ## How it works
 
 - **Pinned items stay.** Items that are pinned or at priority 0 (and, in Python, items of the invariant dimension) are always included. If they alone exceed the budget, nothing else is added and the report shows the overrun (`synthesize` in `src/harpe/engine.py` and `src/lib.rs`).
-- **Greedy by priority by default.** `PrunePolicy.LOWEST_PRIORITY` sorts the other items by priority (lower number first; in Python, newer first among equals) and adds each one that still fits. Other policies order items by age, input order or a relevance score; the Python engine also has a dynamic-programming selection over a per-item utility score (`KNAPSACK_DP`).
+- **Greedy by priority by default.** `PrunePolicy.LOWEST_PRIORITY` sorts the other items by priority (lower number first; in Python, newer first among equals) and adds each one that still fits. Other policies order items by age, input order or a relevance score. The Python engine also has `KNAPSACK_DP`: an exact 0/1 knapsack on raw token counts over a per-item utility score while `items × (capacity + 1)` is at most 5,000,000 cells, and a density-greedy pass with slack fill above that; the docstring on `_solve_knapsack_dp` states the rule. An unknown policy raises `ValueError`.
 - **Confidential items withheld.** With the default `destination="remote"`, the Python engine drops every item marked confidential before budgeting, so it never takes a slot or reaches the output (`src/harpe/engine.py`).
-- **Token counts.** The default counter takes the larger of two estimates: the number of words and ASCII punctuation marks, or a quarter of the characters. Rust and Python count the same text the same way; both test suites check the shared vectors in `tests/token_vectors.tsv`. Items that already have a `token_count` are not counted again. Pass your own `TokenCounter` for exact counts.
+- **Token counts.** The default counter takes the larger of two estimates: the number of pieces (a run of ASCII letters, digits and underscores, or any single other non-space character, so each CJK character, emoji or accented letter is one) plus one extra per three characters of any hex run of eight or more, or a quarter of the characters. Rust and Python count the same text the same way; both test suites check the shared vectors in `tests/token_vectors.tsv`, which record tiktoken `o200k_base` counts beside the new vectors for comparison. Items that already have a `token_count` are not counted again. `harpe.tokenizers.TiktokenCounter` (install `harpe[tiktoken]`) or your own `TokenCounter` gives exact counts.
+- **The report says what happened.** `SynthesisReport.effective_budget` is the ceiling the selection was made against (after any dynamic expansion), `reference_time` is the timestamp recency was scored from (the newest item, never the wall clock, so the same input gives the same output), and `over_budget`/`overflow_tokens` say when pinned items alone exceeded the ceiling. `synthesize(..., strict=True)` (Python) and `synthesize_with(..., strict: true)` (Rust) turn that case into an error.
 
 ## Limits
 
 - **Alpha release:** APIs and structures are subject to change before 1.0.
 - **Greedy is not best-fit:** The default policy can leave room that a different combination of items would fill.
-- **Pinned overrun:** Pinned items are kept even when they exceed the budget.
-- **Time-dependent policies:** `KNAPSACK_DP` and `DUO_ATTENTION` score items by age against the current time, so their selection can change as time passes.
+- **Pinned overrun:** Pinned items are kept even when they exceed the budget; the report flags it (`over_budget`) and strict mode refuses it, but the engine does not trim pinned content.
+- **Knapsack cost:** `KNAPSACK_DP` is exact only while `items × (capacity + 1)` fits in 5,000,000 cells (for example 25 items at a 200,000-token ceiling, or 1,000 items at 5,000); above that it falls back to a greedy pass whose unused capacity is below the largest single item.
 - **Allocations:** Harpe allocates context items and report structures during synthesis.
-- **Local token heuristic:** The default counter is an estimate, not your model's tokenizer. It treats characters outside ASCII, other than spaces, as letters, so it can undercount text written without spaces, such as Chinese or Japanese. When exact counts matter for a downstream provider, pass your own `TokenCounter`.
+- **Local token heuristic:** The default counter is an estimate, not your model's tokenizer. Against tiktoken `o200k_base` it undercounts emoji and hex ids (about 0.6× on the shared vectors) and overcounts CJK (about 1.3-1.4×) and English prose (about 1.2×, because every punctuation mark is a piece); over all 208 shared vectors it counts 1.11× what `o200k_base` does. When exact counts matter for a downstream provider, use `TiktokenCounter` or your own `TokenCounter`.
 - **Not independently assessed:** No security review or certification has been completed. Designed for local and disconnected use.
 
 ## Security
