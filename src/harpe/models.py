@@ -137,6 +137,16 @@ class SynthesisReport(BaseModel):
         default=False,
         description="True if the knapsack budget was dynamically expanded for multi-session aggregation.",
     )
+    over_budget: bool = Field(
+        default=False,
+        description="True when the pinned, priority-0 and invariant items alone exceed effective_budget. They are "
+        "still all included (pinned items are never pruned), so consumed_tokens is above the ceiling.",
+    )
+    overflow_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="How many tokens consumed_tokens is above effective_budget; 0 unless over_budget.",
+    )
     effective_budget: int = Field(
         default=0,
         ge=0,

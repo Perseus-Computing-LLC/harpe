@@ -41,6 +41,19 @@ class HeuristicTokenCounter:
         return max(pieces, (len(text) + 3) // 4)
 
 
+class BudgetOverflowError(ValueError):
+    """Raised by :meth:`ContextBudgetEngine.synthesize` with ``strict=True`` when the pinned, priority-0 and
+    invariant items alone exceed the available context. Carries the report that would otherwise have been
+    returned as ``report``."""
+
+    def __init__(self, report: SynthesisReport) -> None:
+        self.report = report
+        super().__init__(
+            f"pinned items use {report.consumed_tokens} tokens against a ceiling of {report.effective_budget}: "
+            f"{report.overflow_tokens} over"
+        )
+
+
 class ContextBudgetEngine(ContextSynthesizer):
     """Deterministic context synthesis engine enforcing explicit token budgets."""
 
@@ -175,6 +188,7 @@ class ContextBudgetEngine(ContextSynthesizer):
         max_dynamic_factor: float = 2.0,
         temporal_boost: float = 1.15,
         persona_item: Optional[Union[ContextItem, Dict[str, Any]]] = None,
+        strict: bool = False,
     ) -> SynthesisReport:
         """``destination``: "remote" (default) withholds every item marked confidential, pinned or not, before any
         budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything.
@@ -186,6 +200,9 @@ class ContextBudgetEngine(ContextSynthesizer):
         ceiling actually used is reported as ``SynthesisReport.effective_budget`` on every path.
         ``temporal_boost``: utility weight multiplier (default 1.15x) for items with temporal anchors when query is temporal.
         ``persona_item``: optional compact user persona/preference slot injected at priority=0 when preference intent occurs.
+        ``strict``: pinned, priority-0 and invariant-dimension items are never pruned, so when they alone exceed the
+        ceiling the report comes back with ``over_budget=True`` and ``overflow_tokens`` set. With ``strict=True``
+        that case raises :class:`BudgetOverflowError` (carrying the report) instead of returning.
         """
         if prune_policy is not None:
             policy = prune_policy
@@ -279,7 +296,10 @@ class ContextBudgetEngine(ContextSynthesizer):
         pinned_tokens = sum(it.token_count for it in pinned_items)
 
         if pinned_tokens >= available_capacity:
+            # Nothing else fits. Pinned items are kept even over the ceiling, so say so in the report rather
+            # than hiding it behind budget_remaining=0; strict callers get an exception instead.
             dim_counts, dim_tokens = _calc_dim_breakdown(pinned_items)
+            overflow = pinned_tokens - available_capacity
             report = SynthesisReport(
                 included_items=pinned_items,
                 pruned_items=unpinned_items,
@@ -290,10 +310,14 @@ class ContextBudgetEngine(ContextSynthesizer):
                 policy_applied=policy,
                 query_intent=evaluated_intent.value if evaluated_intent else None,
                 dynamic_budget_expanded=dynamic_budget_expanded,
+                over_budget=overflow > 0,
+                overflow_tokens=overflow,
                 effective_budget=available_capacity,
                 dimension_counts=dim_counts,
                 dimension_tokens=dim_tokens,
             )
+            if strict and overflow > 0:
+                raise BudgetOverflowError(report)
             for hook in self.hooks:
                 hook.post_prune(report)
             return report

@@ -167,6 +167,11 @@ pub struct SynthesisReport {
     pub pruned_tokens: usize,
     /// The pruning strategy that was applied during synthesis.
     pub policy_applied: PrunePolicy,
+    /// True when the pinned and priority-0 items alone exceed the available context. They are
+    /// still all included (pinned items are never pruned), so `consumed_tokens` is above the ceiling.
+    pub over_budget: bool,
+    /// How many tokens `consumed_tokens` is above the available context; 0 unless `over_budget`.
+    pub overflow_tokens: usize,
 }
 
 /// Errors returned during context synthesis and budgeting operations.
@@ -301,14 +306,17 @@ impl ContextBudgetEngine {
     pub fn new(counter: Box<dyn TokenCounter>) -> Self {
         Self { counter }
     }
-}
 
-impl ContextSynthesizer for ContextBudgetEngine {
-    fn synthesize(
+    /// [`ContextSynthesizer::synthesize`] with a `strict` switch. Pinned and priority-0 items are
+    /// never pruned, so when they alone exceed the available context the report comes back with
+    /// `over_budget` set and `consumed_tokens` above the ceiling. With `strict`, that case is
+    /// [`HarpeError::BudgetOverflow`] instead of a report.
+    pub fn synthesize_with(
         &self,
         items: &[ContextItem],
         budget: &TokenBudget,
         policy: PrunePolicy,
+        strict: bool,
     ) -> Result<SynthesisReport, HarpeError> {
         let mut resolved: Vec<ContextItem> = Vec::with_capacity(items.len());
         for it in items {
@@ -334,6 +342,14 @@ impl ContextSynthesizer for ContextBudgetEngine {
         let pinned_tokens: usize = pinned.iter().map(|it| it.token_count).sum();
 
         if pinned_tokens >= capacity {
+            // Nothing else fits. Say so in the report instead of hiding it behind
+            // budget_remaining = 0; strict callers get the error the enum always had for this.
+            let overflow = pinned_tokens - capacity;
+            if strict && overflow > 0 {
+                return Err(HarpeError::BudgetOverflow(format!(
+                    "pinned items use {pinned_tokens} tokens against a ceiling of {capacity}: {overflow} over"
+                )));
+            }
             let pruned_tokens = unpinned.iter().map(|it| it.token_count).sum();
             return Ok(SynthesisReport {
                 included_items: pinned,
@@ -342,6 +358,8 @@ impl ContextSynthesizer for ContextBudgetEngine {
                 budget_remaining: 0,
                 pruned_tokens,
                 policy_applied: policy,
+                over_budget: overflow > 0,
+                overflow_tokens: overflow,
             });
         }
 
@@ -407,7 +425,21 @@ impl ContextSynthesizer for ContextBudgetEngine {
             budget_remaining: capacity.saturating_sub(consumed),
             pruned_tokens: pruned,
             policy_applied: policy,
+            over_budget: false,
+            overflow_tokens: 0,
         })
+    }
+}
+
+impl ContextSynthesizer for ContextBudgetEngine {
+    /// Non-strict synthesis: see [`ContextBudgetEngine::synthesize_with`].
+    fn synthesize(
+        &self,
+        items: &[ContextItem],
+        budget: &TokenBudget,
+        policy: PrunePolicy,
+    ) -> Result<SynthesisReport, HarpeError> {
+        self.synthesize_with(items, budget, policy, false)
     }
 }
 
@@ -503,5 +535,55 @@ mod tests {
         assert_eq!(report.pruned_items[0].id, "low");
         assert_eq!(report.consumed_tokens, 50);
         assert_eq!(report.budget_remaining, 50);
+        assert!(!report.over_budget);
+        assert_eq!(report.overflow_tokens, 0);
+    }
+
+    #[test]
+    fn test_pinned_overflow_is_reported_and_strict_refuses_it() {
+        let engine = ContextBudgetEngine::default();
+        let budget = TokenBudget::new(100);
+        let big_pin = ContextItem {
+            id: "pin".into(),
+            role: "system".into(),
+            content: "Huge system prompt".into(),
+            token_count: 150,
+            priority: 0,
+            pinned: true,
+            created_at: 1.0,
+        };
+        let other = ContextItem {
+            id: "other".into(),
+            role: "user".into(),
+            content: "Anything".into(),
+            token_count: 10,
+            priority: 50,
+            pinned: false,
+            created_at: 2.0,
+        };
+        let items = vec![big_pin, other];
+
+        let report = engine
+            .synthesize(&items, &budget, PrunePolicy::LowestPriority)
+            .unwrap();
+        assert!(report.over_budget);
+        assert_eq!(report.overflow_tokens, 50);
+        assert_eq!(report.consumed_tokens, 150);
+        assert_eq!(report.budget_remaining, 0);
+        assert_eq!(report.included_items.len(), 1);
+        assert_eq!(report.pruned_items.len(), 1);
+
+        match engine.synthesize_with(&items, &budget, PrunePolicy::LowestPriority, true) {
+            Err(HarpeError::BudgetOverflow(msg)) => assert!(msg.contains("50 over"), "{msg}"),
+            other => panic!("expected BudgetOverflow, got {other:?}"),
+        }
+
+        // Pinned exactly at capacity is full, not over: strict still returns a report.
+        let exact = TokenBudget::new(150);
+        let report = engine
+            .synthesize_with(&items, &exact, PrunePolicy::LowestPriority, true)
+            .unwrap();
+        assert!(!report.over_budget);
+        assert_eq!(report.overflow_tokens, 0);
     }
 }
