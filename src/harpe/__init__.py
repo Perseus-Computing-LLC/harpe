@@ -4,7 +4,7 @@ from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisRepor
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .engine import BudgetOverflowError, ContextBudgetEngine, HeuristicTokenCounter
 from .tokenizers import TiktokenCounter, tiktoken_available
-from .dtoc import CompressedToolOutput, DynamicToolCompressor
+from .dtoc import CompressedToolOutput, DynamicToolCompressor, LRUArtifactStore
 from .prompts import format_official_cot_prompt, format_qa_prompt
 from .conflicts import Conflict, annotate_conflicts, conflict_note, find_conflicts
 from .routing import (
@@ -97,6 +97,7 @@ __all__ = [
     "tiktoken_available",
     "CompressedToolOutput",
     "DynamicToolCompressor",
+    "LRUArtifactStore",
     "format_official_cot_prompt",
     "format_qa_prompt",
     "Conflict",
