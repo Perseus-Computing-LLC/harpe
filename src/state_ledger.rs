@@ -486,7 +486,9 @@ mod tests {
             checked += 1;
         }
         assert_eq!(checked, 12);
-        assert!(content_words("I wrote tests2 for socket_events and café").iter().all(|w| w == "wrote"));
+        assert!(content_words("I wrote tests2 for socket_events and café")
+            .iter()
+            .all(|w| w == "wrote"));
     }
 
     fn ledger() -> StateLedger {
