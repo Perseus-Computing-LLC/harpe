@@ -93,12 +93,20 @@ pub struct Window {
     pub limit: Option<usize>,
 }
 
-/// Lower-cased letter runs of three or more characters, stop-words removed (Python: `\b[a-z]{3,}\b`).
+/// Lower-cased runs of three or more ASCII letters bounded by word boundaries, stop-words removed.
+/// Mirrors Python's `re.findall(r"\b[a-z]{3,}\b", text.lower())`: `\b` sits between a word
+/// character (letter, digit or `_`, any script) and a non-word character, so a run that touches a
+/// digit, an underscore or a non-ASCII letter is not bounded and yields nothing. `tests2`,
+/// `socket_events` and `café` produce no words; `caf` is never produced. (Python's `\w` follows
+/// the Unicode database's alphanumeric classes while Rust's `is_alphanumeric` follows the
+/// `Alphabetic` property; they differ only for a few combining marks and letter-like symbols.)
 pub fn content_words(text: &str) -> BTreeSet<String> {
     let lower = text.to_lowercase();
     let mut out = BTreeSet::new();
-    for run in lower.split(|c: char| !c.is_ascii_lowercase()) {
-        if run.len() >= 3 && !STOP.contains(&run) {
+    // Split on `\W`, then keep a run only when every character is an ASCII lowercase letter: a
+    // run with a digit, underscore or non-ASCII letter inside has no `\b` where `[a-z]{3,}` ends.
+    for run in lower.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+        if run.len() >= 3 && run.bytes().all(|b| b.is_ascii_lowercase()) && !STOP.contains(&run) {
             out.insert(run.to_string());
         }
     }
@@ -462,6 +470,24 @@ pub fn header(pairs: &[StatePair], max_pairs: usize, max_words: usize) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_words_match_the_shared_vectors() {
+        // tests/content_word_vectors.tsv is also checked by tests/test_state_ledger.py; a run that touches a
+        // digit, underscore or non-ASCII letter has no `\b` and yields nothing, exactly as Python's regex.
+        let mut checked = 0;
+        for line in include_str!("../tests/content_word_vectors.tsv").lines() {
+            if line.starts_with('#') {
+                continue;
+            }
+            let (text, expected) = line.split_once('\t').expect(line);
+            let words: Vec<String> = content_words(text).into_iter().collect();
+            assert_eq!(words.join(" "), expected, "{text}");
+            checked += 1;
+        }
+        assert_eq!(checked, 12);
+        assert!(content_words("I wrote tests2 for socket_events and café").iter().all(|w| w == "wrote"));
+    }
 
     fn ledger() -> StateLedger {
         let mut led = StateLedger::new();

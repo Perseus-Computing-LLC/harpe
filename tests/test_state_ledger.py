@@ -6,9 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from harpe.state_ledger import QUESTION_GATE, StateLedger, StatePair, header
+from harpe.state_ledger import QUESTION_GATE, StateLedger, StatePair, content_words, header
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "harpe" / "state_ledger.py"
+
+CONTENT_WORD_VECTORS = [
+    line.split("\t")
+    for line in Path(__file__).with_name("content_word_vectors.tsv").read_text(encoding="utf-8").splitlines()
+    if not line.startswith("#")
+]
+
+
+@pytest.mark.parametrize("text, expected", CONTENT_WORD_VECTORS, ids=[v[0][:40] for v in CONTENT_WORD_VECTORS])
+def test_content_words_match_the_shared_vectors(text, expected):
+    """The same file is checked by src/state_ledger.rs so both ledgers pair the same claims."""
+    assert len(CONTENT_WORD_VECTORS) == 12
+    assert " ".join(sorted(content_words(text))) == expected
 
 UNITS = {
     "0:1": ("user: I've written integration tests for the socket events, they run on every push.", "2023-05-11"),

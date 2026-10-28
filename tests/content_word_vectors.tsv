@@ -1,0 +1,17 @@
+# Content-word vectors shared by the Rust and Python StateLedger tests (src/state_ledger.rs, tests/test_state_ledger.py).
+# Each line: the input text, a tab, the expected content words sorted and space-separated (empty when none).
+# The rule is Python's re.findall(r"\b[a-z]{3,}\b", text.lower()) minus the stop-word list: a run of three or
+# more ASCII letters that is bounded by word boundaries, so a run touching a digit, an underscore or a non-ASCII
+# letter yields nothing.
+I wrote tests2 for socket_events and café	wrote
+I've written integration tests for the socket events, they run on every push.	events every integration push run socket tests they written
+Have I completed the migration runbook?	completed migration runbook
+naïve résumé Größe	
+x1 ab abc _abc abc_ a_b	abc
+CAFÉ Café café caf	caf
+The and of to for with	
+deploy on Fridays at 9am	deploy fridays
+SOCKET-EVENTS v2.0-beta	beta events socket
+tests-2 tests_2 tests2 tests	tests
+Ünïcödé_naïve-test	test
+日本語 words here	here words
