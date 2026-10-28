@@ -39,17 +39,33 @@ class GovernorDecision(BaseModel):
 
 
 class BehavioralGovernor:
-    """Evaluates candidate actions against active operational invariants and epistemic boundaries."""
+    """Evaluates candidate actions against active operational invariants and epistemic boundaries.
+
+    The blocked patterns are a last-resort heuristic over the action string, not a sandbox: they catch the
+    obvious spellings of a few destructive commands (recursive ``rm`` of root, home, a glob or the parent
+    directory, with the flags in any order or split across groups; ``chmod 777``; ``curl ... | sh``; exporting a
+    token or key) and nothing more. Quoting, aliases, variables, scripts and every command they do not name pass
+    straight through. Enforce real limits in the executor, and treat a REJECTED verdict here as a tripwire that
+    fired, not as proof that APPROVED actions are safe."""
+
+    # `rm` followed by option groups, at least one of which carries `r` or `R` (recursive), with any number of
+    # other groups around it (`-rf`, `-fr`, `-r -f`, `--recursive --force`), then the target.
+    _RM_RECURSIVE = (
+        r"\brm\s+(?:(?:-[a-zA-Z]+|--[a-z-]+)\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\s+(?:(?:-[a-zA-Z]+|--[a-z-]+)\s+)*"
+    )
+    DEFAULT_BLOCKED_PATTERNS: List[str] = [
+        # Targets: anything under `/`, `~` or `$HOME`; any argument carrying a `*` glob; `.` or `..` alone.
+        _RM_RECURSIVE + r"(?:[/~]|\$HOME|\S*\*|\.{1,2}/?(?:\s|$))",
+        r"\bchmod\s+(?:-[a-zA-Z]+\s+)*0?777\b",
+        r"\b(?:curl|wget)\b.*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b",
+        r"\bexport\s+\S*TOKEN\S*=",
+        r"\bexport\s+\S*KEY\S*=",
+    ]
 
     def __init__(self, blocked_patterns: Optional[List[str]] = None):
-        # Default safety patterns that trigger scrutiny unless overridden
-        self.blocked_patterns = blocked_patterns or [
-            r"rm\s+-rf\s+[/~]",
-            r"chmod\s+777",
-            r"curl.*\|\s*sh",
-            r"export\s+.*TOKEN=.*",
-            r"export\s+.*KEY=.*",
-        ]
+        self.blocked_patterns = (
+            list(blocked_patterns) if blocked_patterns is not None else list(self.DEFAULT_BLOCKED_PATTERNS)
+        )
 
     def evaluate(
         self,
@@ -72,9 +88,11 @@ class BehavioralGovernor:
         reasons: List[str] = []
         contradictions: List[str] = []
 
-        # 1. Check intrinsic blocked patterns
+        # 1. Check intrinsic blocked patterns. Whitespace is collapsed first so tabs, newlines and doubled
+        # spaces cannot carry a flag group past the patterns.
+        normalised_action = " ".join(candidate_action.split())
         for pattern in self.blocked_patterns:
-            if re.search(pattern, candidate_action, re.IGNORECASE):
+            if re.search(pattern, normalised_action, re.IGNORECASE):
                 reasons.append(f"Action matches critical blocked pattern: '{pattern}'")
                 return GovernorDecision(
                     verdict=GovernorVerdict.REJECTED,
@@ -106,9 +124,11 @@ class BehavioralGovernor:
             if "mit license" in inv_text and "proprietary" in candidate_action.lower():
                 contradictions.append(f"Contradicts invariant '{inv.id}': Action references proprietary licensing under MIT requirement.")
 
-            # Rule: Epistemic boundary discipline
-            if "revoked" in inv.metadata.get("epistemic_state", "").lower():
-                if inv.metadata.get("key", "").lower() in candidate_action.lower():
+            # Rule: Epistemic boundary discipline. Only a non-empty key can match: '' is a substring of every
+            # string, so a revoked invariant without a key used to suppress every action.
+            if "revoked" in str(inv.metadata.get("epistemic_state", "")).lower():
+                key = str(inv.metadata.get("key", "") or "").strip().lower()
+                if key and key in candidate_action.lower():
                     reasons.append(f"Action relies on revoked epistemic state in '{inv.id}'.")
 
         # 3. Check for contradictory directives in candidate history
