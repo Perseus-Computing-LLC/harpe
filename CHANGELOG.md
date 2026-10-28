@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.10] - 2026-10-28
+
 Repair set from the 2026-10-28 review. Each item is one commit on `fix/review-2026-10-28` and ships with a regression
-test; the version is not bumped.
+test. alpha.9 (below) was never tagged or published; its changes ship here, and alpha.8 is the previous release
+on crates.io and PyPI.
 
 ### Fixed
 
