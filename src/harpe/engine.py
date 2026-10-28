@@ -220,6 +220,14 @@ class ContextBudgetEngine(ContextSynthesizer):
             if evaluated_intent == QueryIntent.PREFERENCE or evaluated_intent is None:
                 items_list.insert(0, p_cand)
 
+        # Ids come straight from the caller and are only unique by convention. Selection below is tracked
+        # by object identity, so duplicates cannot smuggle a pruned item back in, but a report keyed by id
+        # would still be ambiguous for the caller. Refuse them rather than guess.
+        ids = [it.id for it in items_list]
+        if len(set(ids)) != len(ids):
+            dupes = sorted({i for i in ids if ids.count(i) > 1})
+            raise ValueError(f"duplicate ContextItem ids: {dupes}")
+
         withheld: List[ContextItem] = []
         if destination == "remote":
             withheld = [it for it in items_list if it.sensitivity == "confidential"]
@@ -397,8 +405,8 @@ class ContextBudgetEngine(ContextSynthesizer):
 
             sinks: List[ContextItem] = chrono[:k_sink_count]
             local_window: List[ContextItem] = chrono[len(chrono) - k_local_count:] if k_local_count > 0 else []
-            sink_and_local_ids = {it.id for it in sinks + local_window}
-            middle_candidates = [it for it in chrono if it.id not in sink_and_local_ids]
+            sink_and_local = {id(it) for it in sinks + local_window}
+            middle_candidates = [it for it in chrono if id(it) not in sink_and_local]
 
             # Allocate budget for sinks and local window first
             guaranteed_items: List[ContextItem] = []
@@ -419,8 +427,8 @@ class ContextBudgetEngine(ContextSynthesizer):
             remaining_capacity -= sum(x.token_count for x in knapsack_selected)
 
             included_unpinned = guaranteed_items + knapsack_selected
-            included_ids = {it.id for it in included_unpinned}
-            pruned_unpinned = [it for it in unpinned_items if it.id not in included_ids]
+            included_objs = {id(it) for it in included_unpinned}
+            pruned_unpinned = [it for it in unpinned_items if id(it) not in included_objs]
 
         else:
             sorted_candidates = sorted(unpinned_items, key=lambda x: x.priority)
@@ -431,14 +439,11 @@ class ContextBudgetEngine(ContextSynthesizer):
                 else:
                     pruned_unpinned.append(cand)
 
-        included_set = {it.id for it in included_unpinned}
-        final_unpinned_in_order = [it for it in unpinned_items if it.id in included_set]
-
-        final_included_set = {it.id for it in pinned_items}.union(included_set)
-        final_included = [it for it in resolved_items if it.id in final_included_set]
-
-        final_pruned_set = {it.id for it in resolved_items if it.id not in final_included_set}
-        final_pruned = [it for it in resolved_items if it.id in final_pruned_set]
+        # Rebuild input order from the objects each policy chose, never from ids: id membership would
+        # re-admit every item sharing an id with a selected one and break the hard ceiling.
+        chosen = {id(it) for it in pinned_items} | {id(it) for it in included_unpinned}
+        final_included = [it for it in resolved_items if id(it) in chosen]
+        final_pruned = [it for it in resolved_items if id(it) not in chosen]
 
         total_consumed = sum(it.token_count for it in final_included)
         total_pruned = sum(it.token_count for it in final_pruned)
