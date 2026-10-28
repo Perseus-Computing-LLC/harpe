@@ -100,57 +100,56 @@ class ContextBudgetEngine(ContextSynthesizer):
         items: List[ContextItem],
         utilities: List[float],
         capacity: int,
-        dp_quant_bins: int = 1000,
-        max_exact_items: int = 2000,
+        max_cells: int = 5_000_000,
     ) -> Tuple[List[ContextItem], List[ContextItem]]:
-        """Exact 0/1 Knapsack DP with quantized budget bins or Dantzig density fallback."""
-        if not items or capacity <= 0:
-            return [], list(items)
+        """Select items of maximum total utility whose token counts sum to at most ``capacity``.
 
+        Exact 0/1 knapsack DP on the raw token weights when ``n * (capacity + 1) <= max_cells`` (default
+        5,000,000): a 1-D value row plus one ``bytearray`` parent row per item, so memory is n*(capacity+1)
+        bytes. Above that size it falls back to utility-density greedy followed by a slack-fill pass in
+        utility order. Neither path quantises the budget, so with positive utilities the unused capacity is
+        smaller than the largest single token count, not n times a bin size. Returns the chosen and the
+        rejected items, each in input order.
+        """
         n = len(items)
-        if n > max_exact_items:
-            # Dantzig greedy density sort (utility / tokens)
-            paired = sorted(
-                zip(items, utilities),
-                key=lambda x: x[1] / max(1, x[0].token_count),
-                reverse=True,
-            )
-            selected: List[ContextItem] = []
-            pruned: List[ContextItem] = []
-            acc = 0
-            for it, _ in paired:
-                if acc + it.token_count <= capacity:
-                    selected.append(it)
-                    acc += it.token_count
-                else:
-                    pruned.append(it)
-            return selected, pruned
+        if n == 0 or capacity <= 0:
+            return [], list(items)
+        weights = [max(1, it.token_count) for it in items]
 
-        # Quantize capacity to bounded integer bins
-        scale = dp_quant_bins / capacity if capacity > dp_quant_bins else 1.0
-        scaled_cap = int(math.ceil(capacity * scale))
-        scaled_weights = [max(1, int(math.ceil(it.token_count * scale))) for it in items]
+        if n * (capacity + 1) <= max_cells:
+            dp = [0.0] * (capacity + 1)
+            # One byte per cell: a list of Python bools costs 8 bytes per slot plus the object.
+            keep = [bytearray(capacity + 1) for _ in range(n)]
+            for i in range(n):
+                w, u, row = weights[i], utilities[i], keep[i]
+                # Reverse scan so each item is used at most once (0/1, not unbounded).
+                for c in range(capacity, w - 1, -1):
+                    cand = dp[c - w] + u
+                    if cand > dp[c]:
+                        dp[c] = cand
+                        row[c] = 1
+            take = set()
+            c = capacity
+            for i in range(n - 1, -1, -1):
+                if keep[i][c]:
+                    take.add(i)
+                    c -= weights[i]
+        else:
+            # Dantzig density order, then fill whatever slack is left in plain utility order: density alone
+            # can skip a small high-utility item that would still have fit.
+            order = sorted(range(n), key=lambda i: (-utilities[i] / weights[i], i))
+            take, used = set(), 0
+            for i in order:
+                if used + weights[i] <= capacity:
+                    take.add(i)
+                    used += weights[i]
+            for i in sorted(range(n), key=lambda i: (-utilities[i], i)):
+                if i not in take and used + weights[i] <= capacity:
+                    take.add(i)
+                    used += weights[i]
 
-        dp = [0.0] * (scaled_cap + 1)
-        parent = [[False] * (scaled_cap + 1) for _ in range(n)]
-
-        for i in range(n):
-            w = scaled_weights[i]
-            v = utilities[i]
-            for c in range(scaled_cap, w - 1, -1):
-                if dp[c - w] + v > dp[c]:
-                    dp[c] = dp[c - w] + v
-                    parent[i][c] = True
-
-        selected_indices = set()
-        c = scaled_cap
-        for i in range(n - 1, -1, -1):
-            if parent[i][c]:
-                selected_indices.add(i)
-                c -= scaled_weights[i]
-
-        selected_items = [items[i] for i in range(n) if i in selected_indices]
-        pruned_items = [items[i] for i in range(n) if i not in selected_indices]
+        selected_items = [items[i] for i in range(n) if i in take]
+        pruned_items = [items[i] for i in range(n) if i not in take]
         return selected_items, pruned_items
 
     def synthesize(
