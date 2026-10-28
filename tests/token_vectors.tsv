@@ -1,9 +1,13 @@
 # Token-count vectors shared by the Rust and Python tests (src/lib.rs, tests/test_token_vectors.py).
 # Each line: the expected count, a tab, the text as UTF-8 in hex, a tab, a description.
-# The rule: the larger of the number of pieces and a quarter of the characters, rounded up. A piece is a run of
-# characters other than whitespace and ASCII symbols, or one ASCII symbol: an ASCII character other than a letter,
-# digit, underscore or whitespace. Whitespace is what Python's str.isspace() accepts: Unicode White_Space plus
-# U+001C to U+001F.
+# The rule: the larger of (pieces + hex extras) and a quarter of the characters, rounded up.
+# A piece is a run of ASCII letters, digits and underscores, or any single other non-whitespace character:
+# an ASCII symbol or any non-ASCII code point (CJK, emoji, accented letters, zero-width marks each count one).
+# Hex extras: every maximal run of 8 or more hex digits [0-9a-fA-F] adds floor(length / 3) on top of the piece it
+# sits in, so hashes and ids cost about one token per three characters.
+# Whitespace is what Python's str.isspace() accepts: Unicode White_Space plus U+001C to U+001F.
+# Where a description says "o200k_base: N", N is the count tiktoken's o200k_base encoding gave for the same text
+# when the vector was added; it is a reference, not what the heuristic must produce.
 0		empty text
 1	61	one letter
 1	20	one space: no pieces, and a quarter of one character rounds up to 1
@@ -163,33 +167,33 @@
 2	61e280af61	U+202F between letters: whitespace
 2	61e2819f61	U+205F between letters: whitespace
 2	61e3808061	U+3000 between letters: whitespace
-1	61c2ad61	U+00AD soft hyphen between letters: not whitespace
-1	61e1a08e61	U+180E Mongolian vowel separator between letters: not whitespace
-1	61e2808b61	U+200B zero width space between letters: not whitespace
-1	61e2808c61	U+200C zero width non-joiner between letters: not whitespace
-1	61e2808d61	U+200D zero width joiner between letters: not whitespace
-1	61e281a061	U+2060 word joiner between letters: not whitespace
-1	61efbbbf61	U+FEFF zero width no-break space between letters: not whitespace
-1	636166c3a9	accented letter
-3	6e61c3af76652072c3a973756dc3a9	accented words
-2	4772c3b6c39f65	German sharp s
-2	646f6ee2809974	a curly apostrophe joins the word
-2	e2809c71756f746564e2809d	curly quotes join the word
+3	61c2ad61	U+00AD soft hyphen between letters: not whitespace, one piece of its own
+3	61e1a08e61	U+180E Mongolian vowel separator between letters: not whitespace, one piece of its own
+3	61e2808b61	U+200B zero width space between letters: not whitespace, one piece of its own
+3	61e2808c61	U+200C zero width non-joiner between letters: not whitespace, one piece of its own
+3	61e2808d61	U+200D zero width joiner between letters: not whitespace, one piece of its own
+3	61e281a061	U+2060 word joiner between letters: not whitespace, one piece of its own
+3	61efbbbf61	U+FEFF zero width no-break space between letters: not whitespace, one piece of its own
+2	636166c3a9	accented letter; each non-ASCII code point is one piece
+7	6e61c3af76652072c3a973756dc3a9	accented words; each non-ASCII code point is one piece
+4	4772c3b6c39f65	German sharp s; each non-ASCII code point is one piece
+3	646f6ee2809974	a curly apostrophe joins the word; each non-ASCII code point is one piece
+3	e2809c71756f746564e2809d	curly quotes join the word; each non-ASCII code point is one piece
 3	776f7264e28094776f7264	an em dash joins the words
 2	77616974e280a6	an ellipsis character joins the word
-2	e697a5e69cace8aa9ee381aee38386e382ade382b9e38388	Japanese without spaces
-2	e4bda0e5a5bdefbc8ce4b896e7958ce38082	Chinese with full-width punctuation
-4	e4bb8ae5a4a9e5a4a9e6b094e5be88e5a5bdefbc8ce68891e4bbace58ebbe585ace59bade695a3e6ada5e590a7e38082	Chinese sentence
-3	d0bfd180d0b8d0b2d0b5d1822c20d0bcd0b8d180	Cyrillic with an ASCII comma
-4	d985d8b1d8add8a8d8a720d8a8d8a7d984d8b9d8a7d984d985	Arabic
-4	e0a4a8e0a4aee0a4b8e0a58de0a4a4e0a58720e0a4a6e0a581e0a4a8e0a4bfe0a4afe0a4be	Devanagari with combining marks
-1	65cc81	combining acute accent
-1	f09f8e89f09f8e89f09f8e89	three emoji
+8	e697a5e69cace8aa9ee381aee38386e382ade382b9e38388	Japanese without spaces; each non-ASCII code point is one piece
+6	e4bda0e5a5bdefbc8ce4b896e7958ce38082	Chinese with full-width punctuation; each non-ASCII code point is one piece
+16	e4bb8ae5a4a9e5a4a9e6b094e5be88e5a5bdefbc8ce68891e4bbace58ebbe585ace59bade695a3e6ada5e590a7e38082	Chinese sentence; each non-ASCII code point is one piece
+10	d0bfd180d0b8d0b2d0b5d1822c20d0bcd0b8d180	Cyrillic with an ASCII comma; each non-ASCII code point is one piece
+12	d985d8b1d8add8a8d8a720d8a8d8a7d984d8b9d8a7d984d985	Arabic; each non-ASCII code point is one piece
+12	e0a4a8e0a4aee0a4b8e0a58de0a4a4e0a58720e0a4a6e0a581e0a4a8e0a4bfe0a4afe0a4be	Devanagari with combining marks; each non-ASCII code point is one piece
+2	65cc81	combining acute accent; each non-ASCII code point is one piece
+3	f09f8e89f09f8e89f09f8e89	three emoji; each non-ASCII code point is one piece
 2	6f6b20f09f918d	a word and an emoji
-1	f09f91a9e2808df09f92bb	emoji joined by a zero width joiner
-1	efbca1efbca2efbca3efbc81	full-width letters and punctuation
-3	783d31e2869279	an arrow joins the word next to it
-5	c39c6ec3af63c3b664c3a95f6e61c3af76652d74657374	mixed ASCII and non-ASCII letters with an underscore and a hyphen
+3	f09f91a9e2808df09f92bb	emoji joined by a zero width joiner; each non-ASCII code point is one piece
+4	efbca1efbca2efbca3efbc81	full-width letters and punctuation; each non-ASCII code point is one piece
+5	783d31e2869279	an arrow joins the word next to it; each non-ASCII code point is one piece
+12	c39c6ec3af63c3b664c3a95f6e61c3af76652d74657374	mixed ASCII and non-ASCII letters with an underscore and a hyphen; each non-ASCII code point is one piece
 34	666e2070726f636573735f73756273797374656d5f302829202d3e20526573756c743c28292c204572726f723e207b206c65742078203d2034323b207072696e746c6e21282272756e6e696e67206379636c6522293b204f6b28282929207d	telarch-benchmarks phase 1, 200-item set, item 0
 34	666e2070726f636573735f73756273797374656d5f3139392829202d3e20526573756c743c28292c204572726f723e207b206c65742078203d2034323b207072696e746c6e21282272756e6e696e67206379636c6522293b204f6b28282929207d	telarch-benchmarks phase 1, 200-item set, item 199
 21	546163746963616c20666565642073656e736f7220656e74727920302077697468206f7065726174696f6e616c20636f6f7264696e6174657320616e64206d697373696f6e20706172616d65746572732e	telarch-benchmarks phase 1, 10-item set, item 0
@@ -203,3 +207,12 @@
 5	746162097365706172617465640976616c756573	tabs
 3	00017f	ASCII control characters are symbols
 5	611c621d631e641f66	U+001C to U+001F separate words
+10	e69db1e4baace382bfe383afe383bce381afe9ab98e38184e381a7e38199	Japanese sentence, ten code points (o200k_base: 8)
+17	e4bb8ae5a4a9e79a84e5a4a9e6b094e5be88e5a5bdefbc8ce68891e4bbace58ebbe585ace59bade695a3e6ada5e590a7e38082	Chinese sentence with full-width punctuation, 17 code points (o200k_base: 12)
+5	f09f918df09f8fbdf09f9a80f09f8e89f09f9880	five emoji code points incl. a skin-tone modifier (o200k_base: 8)
+6	f09f91a8e2808df09f91a9e2808df09f91a72066616d696c79	emoji ZWJ family sequence then an ASCII word (o200k_base: 9)
+22	66633465393634633932356665633663656630306433346236363730646536336636353738353537613438613737393939653933666537336463386636386262	sha256 hex digest, 64 hex digits: 1 piece + 21 extras (o200k_base: 35)
+23	68747470733a2f2f6769746875622e636f6d2f506572736575732d436f6d707574696e672d4c4c432f68617270652f626c6f622f6d61696e2f524541444d452e6d64	URL with path segments (o200k_base: 22)
+21	68747470733a2f2f6578616d706c652e636f6d2f7365617263683f713d746f6b656e2b62756467657426706167653d3223726573756c7473	URL with a query string and fragment (o200k_base: 15)
+15	33663235303465302d346638392d313164332d396130632d303330356538326333333031	UUID: only the 8- and 12-digit hex runs add extras (o200k_base: 27)
+12	636f6d6d697420396663656230326135613366316437653a206669782074686520746f6b656e20636f756e746572	prose with a 16-digit commit hash (o200k_base: 20)

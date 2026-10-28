@@ -214,20 +214,26 @@ pub trait ContextSynthesizer: Send + Sync {
     ) -> Result<SynthesisReport, HarpeError>;
 }
 
-/// Default token estimate, the same in Rust and Python: the larger of the number of pieces and a
-/// quarter of the characters, rounded up. A piece is a run of characters other than whitespace and
-/// ASCII symbols, or one ASCII symbol (an ASCII character other than a letter, digit, `_` or
-/// whitespace). Whitespace is what Python's `str.isspace()` accepts: Unicode `White_Space` plus
-/// U+001C to U+001F. Both test suites check `tests/token_vectors.tsv`.
+/// Default token estimate, the same in Rust and Python: the larger of (pieces + hex extras) and a
+/// quarter of the characters, rounded up. A piece is a run of ASCII letters, digits and underscores,
+/// or any single other non-whitespace character: an ASCII symbol or any non-ASCII code point, so
+/// CJK text, emoji and accented letters count one per code point instead of joining a word. Every
+/// maximal run of 8 or more hex digits adds `len / 3` extras on top of the piece it sits in, so
+/// hashes and ids cost about one token per three characters. Whitespace is what Python's
+/// `str.isspace()` accepts: Unicode `White_Space` plus U+001C to U+001F. Both test suites check
+/// `tests/token_vectors.tsv`. It is a floor, not a tokenizer: pass your model's [`TokenCounter`]
+/// for exact counts.
 #[derive(Debug, Default, Clone)]
 pub struct HeuristicTokenCounter;
 
 impl HeuristicTokenCounter {
     // How each ASCII character counts. Any other character is a space if it is Unicode
-    // `White_Space`, and part of a word otherwise.
+    // `White_Space`, and otherwise a symbol: one piece on its own that ends any word run.
     const WORD: u8 = 0;
     const SPACE: u8 = 1;
     const SYMBOL: u8 = 2;
+    // Runs of at least this many hex digits get the extra per-3-characters charge.
+    const HEX_RUN_MIN: usize = 8;
     const ASCII_CLASS: [u8; 128] = {
         let mut class = [Self::SYMBOL; 128];
         let mut b = 0;
@@ -246,19 +252,32 @@ impl HeuristicTokenCounter {
 
 impl TokenCounter for HeuristicTokenCounter {
     fn count_tokens(&self, text: &str) -> usize {
-        let (mut pieces, mut chars, mut in_word) = (0usize, 0usize, false);
+        let (mut pieces, mut chars, mut in_word, mut hex_run) = (0usize, 0usize, false, 0usize);
         for c in text.chars() {
+            // Hex runs are tracked across piece boundaries exactly like Python's `[0-9a-fA-F]{8,}`:
+            // a maximal run inside a longer word still counts.
+            if c.is_ascii_hexdigit() {
+                hex_run += 1;
+            } else {
+                if hex_run >= Self::HEX_RUN_MIN {
+                    pieces += hex_run / 3;
+                }
+                hex_run = 0;
+            }
             let class = if c.is_ascii() {
                 Self::ASCII_CLASS[c as usize]
             } else if c.is_whitespace() {
                 Self::SPACE
             } else {
-                Self::WORD
+                Self::SYMBOL
             };
             let starts_piece = class == Self::SYMBOL || (class == Self::WORD && !in_word);
             pieces += usize::from(starts_piece);
             chars += 1;
             in_word = class == Self::WORD;
+        }
+        if hex_run >= Self::HEX_RUN_MIN {
+            pieces += hex_run / 3;
         }
         pieces.max(chars.div_ceil(4))
     }
@@ -438,7 +457,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 199);
+        assert_eq!(checked, 208);
     }
 
     #[test]

@@ -24,6 +24,10 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2"]
 
+[project.optional-dependencies]
+# Exact counts through harpe.tokenizers.TiktokenCounter; the default counter stays a dependency-free heuristic.
+tiktoken = ["tiktoken>=0.7"]
+
 [project.urls]
 Homepage = "https://telarch.ai/harpe"
 Documentation = "https://docs.rs/harpe"

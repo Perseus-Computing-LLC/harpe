@@ -19,18 +19,26 @@ from .routing import (
 
 
 class HeuristicTokenCounter:
-    """Default token estimate, the same in Rust and Python: the larger of the number of pieces and a quarter of the
-    characters, rounded up. A piece is a run of characters other than whitespace and ASCII symbols, or one ASCII
-    symbol (an ASCII character other than a letter, digit, ``_`` or whitespace). Whitespace is what
-    ``str.isspace()`` accepts. Both test suites check ``tests/token_vectors.tsv``."""
+    """Default token estimate, the same in Rust and Python: the larger of (pieces + hex extras) and a quarter of
+    the characters, rounded up. A piece is a run of ASCII letters, digits and underscores, or any single other
+    non-whitespace character: an ASCII symbol or any non-ASCII code point, so CJK text, emoji and accented letters
+    count one per code point instead of joining a word. Every maximal run of 8 or more hex digits adds
+    ``len // 3`` extras on top of the piece it sits in, so hashes and ids cost about one token per three
+    characters. Whitespace is what ``str.isspace()`` accepts. Both test suites check ``tests/token_vectors.tsv``.
 
-    _SYMBOLS = re.escape("".join(c for c in map(chr, range(128)) if not (c.isalnum() or c == "_" or c.isspace())))
-    _PIECE_RE = re.compile(f"[^\\s{_SYMBOLS}]+|[{_SYMBOLS}]")
+    Measured against tiktoken ``o200k_base`` this still undercounts emoji (about 2 tokens each) and hex hashes
+    (about 1 token per 1.8 characters) and overcounts CJK (about 0.7 tokens per character); it is a floor, not a
+    tokenizer. Use :class:`harpe.tokenizers.TiktokenCounter` or your model's tokenizer for exact counts."""
+
+    _PIECE_RE = re.compile(r"[A-Za-z0-9_]+|\S")
+    _HEX_RUN_RE = re.compile(r"[0-9a-fA-F]{8,}")
 
     def count_tokens(self, text: str) -> int:
         if not text:
             return 0
-        return max(len(self._PIECE_RE.findall(text)), (len(text) + 3) // 4)
+        pieces = len(self._PIECE_RE.findall(text))
+        pieces += sum(len(run) // 3 for run in self._HEX_RUN_RE.findall(text))
+        return max(pieces, (len(text) + 3) // 4)
 
 
 class ContextBudgetEngine(ContextSynthesizer):

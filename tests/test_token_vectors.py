@@ -15,7 +15,7 @@ VECTORS = [
 
 
 def test_the_file_holds_every_vector():
-    assert len(VECTORS) == 199
+    assert len(VECTORS) == 208
     assert all(len(fields) == 3 for fields in VECTORS)
 
 

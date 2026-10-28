@@ -3,6 +3,7 @@
 from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .engine import ContextBudgetEngine, HeuristicTokenCounter
+from .tokenizers import TiktokenCounter, tiktoken_available
 from .dtoc import CompressedToolOutput, DynamicToolCompressor
 from .prompts import format_official_cot_prompt, format_qa_prompt
 from .conflicts import Conflict, annotate_conflicts, conflict_note, find_conflicts
@@ -91,6 +92,8 @@ __all__ = [
     "TokenCounter",
     "ContextBudgetEngine",
     "HeuristicTokenCounter",
+    "TiktokenCounter",
+    "tiktoken_available",
     "CompressedToolOutput",
     "DynamicToolCompressor",
     "format_official_cot_prompt",
