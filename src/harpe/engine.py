@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import re
-import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
@@ -80,8 +79,12 @@ class ContextBudgetEngine(ContextSynthesizer):
         temporal_boost: float = 1.15,
         now: Optional[float] = None,
     ) -> float:
-        """Evaluate multi-attribute composite utility: 50% RRF/relevance, 30% Attention Density, 20% Exponential Recency."""
-        curr_time = now if now is not None else time.time()
+        """Evaluate multi-attribute composite utility: 50% RRF/relevance, 30% Attention Density, 20% Exponential Recency.
+
+        ``now`` is the reference time the recency decay is measured from. It is never the wall clock: the engine
+        passes ``max(created_at)`` over the inputs so the same items always score the same, and with no ``now``
+        the item is treated as current (decay 1.0)."""
+        curr_time = now if now is not None else item.created_at
         delta_sec = max(0.0, curr_time - item.created_at)
         recency_decay = math.exp(-0.0001 * delta_sec)
 
@@ -189,6 +192,7 @@ class ContextBudgetEngine(ContextSynthesizer):
         temporal_boost: float = 1.15,
         persona_item: Optional[Union[ContextItem, Dict[str, Any]]] = None,
         strict: bool = False,
+        now: Optional[float] = None,
     ) -> SynthesisReport:
         """``destination``: "remote" (default) withholds every item marked confidential, pinned or not, before any
         budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything.
@@ -203,6 +207,9 @@ class ContextBudgetEngine(ContextSynthesizer):
         ``strict``: pinned, priority-0 and invariant-dimension items are never pruned, so when they alone exceed the
         ceiling the report comes back with ``over_budget=True`` and ``overflow_tokens`` set. With ``strict=True``
         that case raises :class:`BudgetOverflowError` (carrying the report) instead of returning.
+        ``now``: reference time for the recency term of ``KNAPSACK_DP`` and ``DUO_ATTENTION``. Defaults to the
+        newest ``created_at`` among the items, never the wall clock, so the same inputs give the same selection
+        whenever they are replayed. The value used is reported as ``SynthesisReport.reference_time``.
         """
         if prune_policy is not None:
             policy = prune_policy
@@ -271,6 +278,11 @@ class ContextBudgetEngine(ContextSynthesizer):
         for hook in self.hooks:
             hook.pre_prune(resolved_items)
 
+        # Recency is measured from the newest item, not from the wall clock, so a replay scores identically.
+        reference_time: Optional[float] = now
+        if reference_time is None and resolved_items:
+            reference_time = max(it.created_at for it in resolved_items)
+
         available_capacity = effective_budget.available_context
 
         pinned_items: List[ContextItem] = []
@@ -313,6 +325,7 @@ class ContextBudgetEngine(ContextSynthesizer):
                 over_budget=overflow > 0,
                 overflow_tokens=overflow,
                 effective_budget=available_capacity,
+                reference_time=reference_time,
                 dimension_counts=dim_counts,
                 dimension_tokens=dim_tokens,
             )
@@ -420,9 +433,8 @@ class ContextBudgetEngine(ContextSynthesizer):
 
         elif policy == PrunePolicy.KNAPSACK_DP:
             # 0/1 Knapsack Dynamic Programming with multi-attribute utility
-            now = time.time()
             utilities = [
-                self._compute_item_utility(it, is_temporal=is_temporal, temporal_boost=temporal_boost, now=now)
+                self._compute_item_utility(it, is_temporal=is_temporal, temporal_boost=temporal_boost, now=reference_time)
                 for it in unpinned_items
             ]
             included_unpinned, pruned_unpinned = self._solve_knapsack_dp(
@@ -450,9 +462,8 @@ class ContextBudgetEngine(ContextSynthesizer):
                     remaining_capacity -= it.token_count
 
             # Apply knapsack DP to select high-utility middle items
-            now = time.time()
             utilities = [
-                self._compute_item_utility(it, is_temporal=is_temporal, temporal_boost=temporal_boost, now=now)
+                self._compute_item_utility(it, is_temporal=is_temporal, temporal_boost=temporal_boost, now=reference_time)
                 for it in middle_candidates
             ]
             knapsack_selected, knapsack_pruned = self._solve_knapsack_dp(
@@ -494,6 +505,7 @@ class ContextBudgetEngine(ContextSynthesizer):
             query_intent=evaluated_intent.value if evaluated_intent else None,
             dynamic_budget_expanded=dynamic_budget_expanded,
             effective_budget=available_capacity,
+            reference_time=reference_time,
             dimension_counts=dim_counts,
             dimension_tokens=dim_tokens,
         )

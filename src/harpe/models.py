@@ -153,6 +153,11 @@ class SynthesisReport(BaseModel):
         description="The available-context ceiling the selection was made against, after any dynamic expansion. "
         "This is the number consumed_tokens is bounded by, not the caller's TokenBudget.total_budget.",
     )
+    reference_time: Optional[float] = Field(
+        default=None,
+        description="The timestamp recency was measured from (the caller's `now`, else the newest created_at among "
+        "the items). None when there were no items. Never the wall clock, so a replay gives the same selection.",
+    )
     dimension_counts: Dict[str, int] = Field(
         default_factory=dict,
         description="Breakdown of included items by cognitive dimension.",
