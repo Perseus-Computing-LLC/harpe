@@ -34,16 +34,22 @@ _PAST = re.compile(r"\b(?:(?<!than\si\s)(?<!than\swe\s)(?<!than\s)used\s+to|prev
                    r"anymore|any\s+more|"
                    r"before\s+(?:i|we)\s+(?:moved|relocated|left|switched|started|changed)|"
                    r"(?:my|our)\s+(?:old|former|previous)\b)", re.I)
-# A statement whose subject is someone else ("my dad majored in ...", "she moved to ...") is not about the user.
+# The people a user talks about by their relation to someone.
+_KIN = (r"(?:dad|father|mom|mother|mum|parents?|brother|sister|siblings?|friends?|partner|wife|husband|spouse|"
+        r"girlfriend|boyfriend|sons?|daughters?|kids?|child|children|colleagues?|coworkers?|co-workers?|boss|manager|"
+        r"neighbou?rs?|cousins?|aunt|uncle|grand\w+|roommate|flatmate|fianc\w+|ex)")
+# A name in the possessive ("Claire's"); sentence-opening contractions ("There's") are not names. Case-sensitive.
+_NAME_POSSESSIVE = (r"(?-i:\b(?!(?:There|It|That|This|He|She|What|Here|Let|Who|Where|How|Everyone|Someone|Everything|"
+                    r"Nothing|Something)['\u2019])[A-Z][a-z]+['\u2019]s)")
+# A statement whose subject is someone else ("my dad majored in ...", "she moved to ...", "Claire's father lives
+# in ...") is not about the user.
 _THIRD_PARTY = re.compile(
-    r"\b(?:he|she|they|his|her|their|(?:my|our)\s+(?:\w+\s+)?(?:dad|father|mom|mother|mum|parents?|brother|sister|"
-    r"siblings?|friends?|partner|wife|husband|spouse|girlfriend|boyfriend|sons?|daughters?|kids?|child|children|"
-    r"colleagues?|coworkers?|co-workers?|boss|manager|neighbou?rs?|cousins?|aunt|uncle|grand\w+|roommate|flatmate|"
-    r"fianc\w+|ex))\b", re.I)
+    r"\b(?:he|she|they|his|her|their|(?:my|our)\s+(?:\w+\s+)?" + _KIN + r"|"
+    r"(?:its|" + _NAME_POSSESSIVE + r")\s+(?:\w+\s+)?" + _KIN + r")\b", re.I)
 # A kinship noun owned by someone else ("her father", "Claire's dad") is theirs, not the user's. Only consulted for a
-# bare noun; "my dad" is always the user's. Sentence-opening contractions ("There's") are not names.
-_OTHERS_POSSESSIVE = re.compile(r"(?:\b(?:her|his|their|its)|\b(?!(?:There|It|That|This|He|She|What|Here|Let|Who|Where|"
-                                r"How|Everyone|Someone|Everything|Nothing|Something)['\u2019])[A-Z][a-z]+['\u2019]s)\s+(?:\w+\s+)?$")
+# bare noun; "my dad" is always the user's.
+_OTHERS_POSSESSIVE = re.compile(r"(?:\b(?:her|his|their|its)|" + _NAME_POSSESSIVE + r")\s+(?:\w+\s+)?$")
+_KIN_AT = re.compile(_KIN + r"\b", re.I)
 # "the father" is someone else's only when the sentence brings in a third person ("...when Claire is with him");
 # "my birth records list the mother as unknown" is about the user.
 _THE_KIN = re.compile(r"\bthe\s+(?:\w+\s+)?$")
@@ -59,6 +65,8 @@ def _about_someone_else(sentence: str, start: int) -> bool:
     """True when the nearest subject before a match is a third party and the match itself is not about "I"."""
     if _SELF.match(sentence, start):
         return False
+    if _KIN_AT.match(sentence, start) and _OTHERS_POSSESSIVE.search(sentence[:start]):
+        return True  # "her father", "Claire's sister": the relative is theirs, whatever came earlier in the sentence
     window = sentence[max(0, start - 70):start]
     if re.search(r"\b(?:who|whom|whose|which)\s+(?:\w+\s+)?$", window, re.I):
         return True  # "a colleague ... who went to the University of Toronto"
@@ -147,8 +155,10 @@ _DEGREE_LEVELS = (("doctorate", r"\b(?:ph\.?\s?d|doctorate|doctoral|doctor\s+of)
 _NEG_HAVE = r"(?:don['\u2019]?t|do\s+not|didn['\u2019]?t|did\s+not|never|haven['\u2019]?t|have\s+not)\s+(?:really\s+|actually\s+)?(?:have|had|knew|know|known)"
 _QUAL = r"(?:(?:living|recorded|known|biological|birth|legal|surviving|real|adoptive|present|named|listed)\s+(?:or\s+)?)*"
 _HAS_NONE = {
-    "siblings": re.compile(r"\b(?:only\s+child|no\s+(?:brothers|sisters|siblings)|" + _NEG_HAVE +
-                           r"\s+(?:any\s+)?" + _QUAL + r"(?:siblings|brothers|sisters)|without\s+(?:any\s+)?siblings|"
+    "siblings": re.compile(r"\b(?:only\s+child|no\s+(?:brothers?|sisters?|siblings?)|" + _NEG_HAVE +
+                           r"\s+(?:any\s+|a\s+|an\s+)?" + _QUAL + r"(?:siblings?|brothers?|sisters?)"
+                           r"(?:\s+(?:or|nor)\s+(?:any\s+|a\s+|an\s+)?(?:siblings?|brothers?|sisters?))?|"
+                           r"without\s+(?:any\s+)?siblings|"
                            r"not\s+having\s+(?:any\s+)?siblings)\b", re.I),
     "mother": re.compile(r"\b(?:" + _NEG_HAVE + r"\s+(?:a\s+|my\s+|any\s+)?" + _QUAL + r"(?:mother|mom|mum|maternal\s+(?:parent|relationship))|"
                          r"without\s+(?:a\s+|my\s+|any\s+)?" + _QUAL + r"(?:mother|mom|mum|maternal\s+(?:parent|relationship))|"
@@ -196,14 +206,27 @@ def _family_value(kind: str) -> Callable[[str, int], FrozenSet[str]]:
     def read(text: str, start: int) -> FrozenSet[str]:
         values = set()
         reported = bool(_REPORTED_NEGATIVE.search(text))
-        values.add("has:no" if _HAS_NONE[kind].search(text) and not reported else "has:yes")
+        negated = None if reported else _HAS_NONE[kind].search(text)
+        # The denied phrase ("don't have a sister") names no sibling to count; the rest of the sentence may
+        # ("..., but I have two brothers"), and then the user has siblings after all.
+        rest = text if negated is None else text[:negated.start()] + " " + text[negated.end():]
+        counts = set()
         if kind == "siblings" and not reported:
-            for word, twin in _SIBLING_COUNT.findall(text):
+            for word, twin in _SIBLING_COUNT.findall(rest):
                 raw = str(word or twin).lower()
                 number = _NUMBER_WORDS.get(raw, raw)
                 if number.isdigit():
-                    values.add(f"count:{number}")
-            kinds = {k.lower() for k in _SIBLING_KIND.findall(text)}
+                    counts.add(number)
+            if negated is not None and counts - {"0"}:
+                negated = None
+        values.add("has:no" if negated is not None else "has:yes")
+        if kind == "siblings" and not reported:
+            values |= {f"count:{n}" for n in counts}
+            if negated is not None:
+                zero = _SIBLING_COUNT.search(negated.group(0))
+                if zero and _NUMBER_WORDS.get((zero.group(1) or "").lower()) == "0":
+                    values.add("count:0")  # "no siblings" keeps its explicit zero
+            kinds = {k.lower() for k in _SIBLING_KIND.findall(rest)}
             if len(kinds) == 1:
                 values.add(f"kind:{kinds.pop()}")
         values |= {f"year:{y}" for y in _years(text)}

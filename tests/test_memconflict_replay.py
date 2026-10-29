@@ -63,8 +63,11 @@ CHANGED = {
     # Reported negatives ("a friend thought I had no siblings") no longer read as the user's own has:no.
     ("4cbe1c3d", 34, "Q_001"), ("4cbe1c3d", 46, "Q_001"), ("8518c87c", 28, "Q_001"), ("8518c87c", 46, "Q_001"),
     ("9dffc5de", 35, "Q_001"), ("f47bb65a", 14, "Q_001"),
+    # Item 6, singular form: "I don't have a sister" was read as one sister (has:yes, count:1) and rendered as
+    # matching the record; it is now has:no and rendered as a later conflicting claim.
+    ("a7850e51", 20, "Q_001"),
 }
-assert len(CHANGED) == 34
+assert len(CHANGED) == 35
 
 
 def _sha256(path: Path) -> str:
