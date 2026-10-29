@@ -77,7 +77,7 @@ Try it without installing anything: [telarch.ai/harpe](https://telarch.ai/harpe)
 
 ## Measured
 
-Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) v0.1.0-alpha.9, built against harpe 0.1.0-alpha.10, with synthetic data on one EC2 m8azn.metal-12xl bare-metal server. Every run, its range and the command that reproduces it are on [telarch.ai/evidence](https://telarch.ai/evidence).
+Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) v0.1.0-alpha.10, built against harpe 0.1.0-alpha.11, with synthetic data on one EC2 m8azn.metal-12xl bare-metal server. Every run, its range and the command that reproduces it are on [telarch.ai/evidence](https://telarch.ai/evidence).
 
 All of these numbers are for the **Rust crate's greedy `LowestPriority` policy** (`knapsack_cost_curve` in telarch-benchmarks). The Python `KNAPSACK_DP` and `DUO_ATTENTION` policies solve an exact 0/1 knapsack and have not been timed on this hardware; expect milliseconds, not microseconds, for hundreds of items against a large budget.
 
@@ -85,8 +85,8 @@ All of these numbers are for the **Rust crate's greedy `LowestPriority` policy**
 | --- | --- |
 | Fewer tokens sent over 100,000 simulated agent turns, 1,200-token budget per turn | 78.3% |
 | Turns that went over the budget | 0 |
-| Median call time, 10 items | 1.82 µs |
-| Median call time, 200 items | 31.41 µs |
+| Median call time, 10 items | 1.80 µs |
+| Median call time, 200 items | 30.74 µs |
 | Tokens removed to fit the budget, 200 items against 1,500 tokens | 78.0% |
 
 "Turns that went over the budget: 0" was measured with the crate's own `HeuristicTokenCounter` counting both the items and the ceiling, so it shows the selection never exceeds the counts it is given. It says nothing about what a provider's tokenizer would charge for the same text; the heuristic undercounts emoji and hex ids and overcounts CJK and prose against tiktoken `o200k_base` (see Limits). Pinned items that alone exceed the ceiling are reported as `over_budget` rather than pruned; none of the synthetic turns hit that case.
