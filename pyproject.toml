@@ -35,6 +35,6 @@ Repository = "https://github.com/Perseus-Computing-LLC/harpe"
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 
