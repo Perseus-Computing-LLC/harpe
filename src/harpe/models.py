@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import time
 import uuid
 from enum import Enum
@@ -83,7 +84,12 @@ class ContextItem(BaseModel):
     """An individual context item subjected to budgeting and dynamic pruning."""
     id: str = Field(default="", description="Unique identifier for the context item.")
     item_id: Optional[str] = Field(default=None, description="Alias for id.")
-    role: str = Field(default="context", description="Role: system, user, assistant, tool, or context.")
+    role: str = Field(
+        default="context",
+        pattern="^(system|user|assistant|tool|context)$",
+        description="Role: system, user, assistant, tool, or context. Kept through synthesis and serialization: a "
+        "tool output that contains text shaped like a user or system turn stays a tool item.",
+    )
     content: str = Field(description="Raw text content of the item.")
     token_count: int = Field(default=0, ge=0, description="Calculated token length; 0 triggers counter calculation.")
     priority: int = Field(default=50, ge=0, le=100, description="Priority tier: 0 (highest/pinned) to 100 (disposable).")
@@ -115,6 +121,19 @@ class ContextItem(BaseModel):
             elif cur_id and not item_id:
                 data["item_id"] = str(cur_id)
         return data
+
+
+class MixedRoleRenderError(ValueError):
+    """Raised by ``to_context_str(mixed_roles="error")`` when the included items carry more than one role."""
+
+    def __init__(self, roles: List[str]) -> None:
+        self.roles = list(roles)
+        super().__init__(f"included items carry more than one role ({', '.join(self.roles)}); a flat render would "
+                         "launder them. Use to_messages(), or mixed_roles='fence' / 'flatten'.")
+
+
+def _attr(value: str) -> str:
+    return value.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 class SynthesisReport(BaseModel):
@@ -167,10 +186,42 @@ class SynthesisReport(BaseModel):
         description="Breakdown of consumed tokens by cognitive dimension.",
     )
 
-    def to_context_str(self, delimiter: str = "\n\n") -> str:
-        """Render all included items into a single context string separated by delimiter."""
-        return delimiter.join(item.content for item in self.included_items)
+    def to_messages(self) -> List[Dict[str, str]]:
+        """Serialize the included items role-typed, one message per item, in order.
 
-    def render(self, delimiter: str = "\n\n") -> str:
+        Nothing is merged, so a tool output that contains a forged user or system turn stays inside a tool
+        message. This is the serialization a caller should hand to a chat model."""
+        return [{"role": it.role, "id": it.id, "content": it.content} for it in self.included_items]
+
+    def to_context_str(
+        self,
+        delimiter: str = "\n\n",
+        *,
+        mixed_roles: str = "fence",
+        fence_nonce: Optional[str] = None,
+    ) -> str:
+        """Render the included items into one string.
+
+        When every item has the same role the items are joined with ``delimiter``, as before. When roles are
+        mixed, joining would launder roles (a tool output containing ``user: ...`` would read as a user turn), so
+        ``mixed_roles`` decides: ``"fence"`` (default) wraps each item in a ``<harpe-role>`` block that names the
+        role and carries a per-render nonce, so content produced before the render cannot forge a closing tag;
+        ``"error"`` raises :class:`MixedRoleRenderError`; ``"flatten"`` is the old behaviour, on explicit opt-in
+        only. ``fence_nonce`` fixes the nonce for a reproducible render (tests); otherwise it is fresh each call."""
+        if mixed_roles not in ("fence", "error", "flatten"):
+            raise ValueError(f"mixed_roles must be 'fence', 'error' or 'flatten', not {mixed_roles!r}")
+        roles = {it.role for it in self.included_items}
+        if len(roles) <= 1 or mixed_roles == "flatten":
+            return delimiter.join(item.content for item in self.included_items)
+        if mixed_roles == "error":
+            raise MixedRoleRenderError(sorted(roles))
+        nonce = fence_nonce if fence_nonce is not None else secrets.token_hex(8)
+        blocks = [
+            f'<harpe-role name="{it.role}" id="{_attr(it.id)}" fence="{nonce}">\n{it.content}\n</harpe-role fence="{nonce}">'
+            for it in self.included_items
+        ]
+        return delimiter.join(blocks)
+
+    def render(self, delimiter: str = "\n\n", **kwargs: Any) -> str:
         """Alias for to_context_str()."""
-        return self.to_context_str(delimiter=delimiter)
+        return self.to_context_str(delimiter=delimiter, **kwargs)

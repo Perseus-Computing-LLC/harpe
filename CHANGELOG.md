@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- H-R2: role-typed serialization. `SynthesisReport.to_messages()` returns one `{role, id, content}` per
+  included item, in order, never merged, so a tool output that contains a forged `user:` or `system:` turn
+  stays a tool message. `to_context_str()` / `render()` keep the old join when every item shares one role; with
+  mixed roles they now fence each item in a `<harpe-role name=... id=... fence=NONCE>` block under a nonce drawn
+  per render (content produced before the render cannot forge the closing tag), raise `MixedRoleRenderError`
+  with `mixed_roles="error"`, or flatten only with `mixed_roles="flatten"`. `fence_nonce=` fixes the nonce
+  for a reproducible render.
+
+### Changed
+- `ContextItem.role` is validated: `system`, `user`, `assistant`, `tool` or `context`. A role that is not one of
+  these cannot be serialized faithfully, so it is refused at construction.
+
 ## [0.1.0-alpha.10] - 2026-10-28
 
 Repair set from the 2026-10-28 review. Each item is one commit on `fix/review-2026-10-28` and ships with a regression

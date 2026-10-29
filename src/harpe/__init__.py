@@ -1,6 +1,6 @@
 """harpe: Deterministic context synthesis and token budgeting for cognitive AI agents."""
 
-from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
+from .models import CognitiveDimension, ContextItem, MixedRoleRenderError, PrunePolicy, SynthesisReport, TokenBudget
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .engine import BudgetOverflowError, ContextBudgetEngine, HeuristicTokenCounter
 from .tokenizers import TiktokenCounter, tiktoken_available
@@ -82,6 +82,7 @@ from .profile import (
 __version__ = "0.1.0a10"
 
 __all__ = [
+    "MixedRoleRenderError",
     "CognitiveDimension",
     "ContextItem",
     "PrunePolicy",
