@@ -166,6 +166,14 @@ class SynthesisReport(BaseModel):
         ge=0,
         description="How many tokens consumed_tokens is above effective_budget; 0 unless over_budget.",
     )
+    control_overflow: bool = Field(
+        default=False,
+        description="True if invariant/pinned items alone exceeded available context (untouchable control budget overflow).",
+    )
+    pinned_policy_digest: str = Field(
+        default="",
+        description="SHA-256 digest over the pinned and invariant items in the context window (H-R1).",
+    )
     effective_budget: int = Field(
         default=0,
         ge=0,
