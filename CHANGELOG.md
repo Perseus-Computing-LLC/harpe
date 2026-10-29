@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `ContextItem.role` is validated: `system`, `user`, `assistant`, `tool` or `context`. A role that is not one of
   these cannot be serialized faithfully, so it is refused at construction.
+- H-B: the exact 0/1 knapsack behind `KNAPSACK_DP` and `DUO_ATTENTION` is about 2.5x faster with identical
+  selections. It still evaluates the textbook one-row recurrence in input order with the same strict-improvement
+  tie rule, but no longer visits every cell one at a time: items heavier than the capacity are rejected before
+  the table is built, weights and capacity are divided by their common divisor when there is one (lossless),
+  cells outside the reachable prefix or the backtrace suffix are skipped, and because the row is monotone two
+  comparisons per block decide whether a block of cells changes entirely (filled by a slice) or not at all,
+  with only the mixed blocks scanned cell by cell. 200 items of 20-400 tokens at an 8,000-token ceiling went
+  from 52 ms to 20.5 ms per `synthesize` (Python 3.14, same host); `tests/test_knapsack_fast_hb.py` checks
+  selection equality against a two-dimensional reference table on 120 seeded instances, including ties, pinned
+  items, oversize items and shared divisors, and holds the timing under 26 ms.
 
 ## [0.1.0-alpha.10] - 2026-10-28
 

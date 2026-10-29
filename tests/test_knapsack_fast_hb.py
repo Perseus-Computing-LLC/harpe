@@ -111,6 +111,29 @@ def test_synthesize_knapsack_matches_reference_with_pinned_items(seed):
     assert [it.id for it in report.included_items] == [it.id for it in items if it.id in expected_ids]
 
 
+def test_items_heavier_than_the_capacity_are_rejected_and_leave_the_rest_unchanged():
+    items = [make_item(0, 6), make_item(1, 11), make_item(2, 5), make_item(3, 5), make_item(4, 50)]
+    chosen, rejected = solve(items, [10.0, 100.0, 9.0, 9.0, 100.0], 10)
+    assert [it.id for it in chosen] == ["i2", "i3"]
+    assert [it.id for it in rejected] == ["i0", "i1", "i4"]
+    chosen, rejected = solve([make_item(0, 11)], [1.0], 10)
+    assert chosen == [] and [it.id for it in rejected] == ["i0"]
+
+
+def test_common_divisor_reduction_is_lossless():
+    # Every weight is a multiple of 50, so the DP runs over capacity // 50 cells and must pick the same set
+    # as the reference does on the raw weights, ties included.
+    rng = random.Random(42)
+    for _ in range(20):
+        n = rng.randint(1, 30)
+        weights = [50 * rng.randint(1, 8) for _ in range(n)]
+        utilities = [float(rng.choice([1, 2, 3, 5])) for _ in range(n)]
+        capacity = rng.randint(1, 1200)
+        items = [make_item(k, weights[k]) for k in range(n)]
+        chosen, _ = solve(items, utilities, capacity)
+        assert [int(it.id[1:]) for it in chosen] == sorted(reference_knapsack(weights, utilities, capacity))
+
+
 def test_synthesize_200_items_at_8000_tokens_is_fast():
     """200 items with 20-400 tokens each against an 8,000-token ceiling: n*(capacity+1) = 1.6M cells, well
     inside the exact path. Before H-B the double loop took ~52 ms here; the bound is half of that."""
