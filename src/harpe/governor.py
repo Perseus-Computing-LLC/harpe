@@ -5,6 +5,16 @@ Enforces Governed Retained-State Behavioral Selection:
 
 Verifies that proposed agent actions adhere to active operational invariants,
 screens out contradictory or revoked historical directives, and gates execution.
+
+NOTE (H-E): DECIDED — this module is NOT exported from top-level `harpe` as a safety
+control until it is replaced or backed by a real policy engine. It remains available
+for internal heuristic screening via explicit import `from harpe.governor import ...`.
+
+Re-entry criteria for export as a verified safety control:
+1. Formal policy DSL or AST engine with sound evaluation semantics.
+2. Multi-turn execution state tracking rather than stateless substring matching.
+3. Cryptographic binding / provenance validation to operational policy records.
+4. Tamper-evident logging integrated directly into the Argus audit chain.
 """
 
 from __future__ import annotations

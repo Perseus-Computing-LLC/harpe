@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a reproducible render.
 
 ### Changed
+- H-E: unexport `BehavioralGovernor`, `GovernorDecision`, `GovernorVerdict` from `harpe` root.
+  Decided: stop exporting as a safety control until backed by a formal policy engine; documented
+  re-entry criteria in `src/harpe/governor.py`. Modules remain accessible via `from harpe.governor import ...`.
 - `ContextItem.role` is validated: `system`, `user`, `assistant`, `tool` or `context`. A role that is not one of
   these cannot be serialized faithfully, so it is refused at construction.
 

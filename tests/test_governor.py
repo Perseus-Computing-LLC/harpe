@@ -2,7 +2,20 @@
 
 import pytest
 
-from harpe import BehavioralGovernor, CognitiveDimension, ContextItem, GovernorVerdict
+from harpe import CognitiveDimension, ContextItem
+from harpe.governor import BehavioralGovernor, GovernorVerdict
+
+
+def test_governor_not_exported_from_top_level():
+    """H-E: BehavioralGovernor, GovernorDecision, GovernorVerdict must not be exported from harpe root."""
+    import harpe
+
+    assert not hasattr(harpe, "BehavioralGovernor")
+    assert not hasattr(harpe, "GovernorDecision")
+    assert not hasattr(harpe, "GovernorVerdict")
+    assert "BehavioralGovernor" not in getattr(harpe, "__all__", [])
+    assert "GovernorDecision" not in getattr(harpe, "__all__", [])
+    assert "GovernorVerdict" not in getattr(harpe, "__all__", [])
 
 
 def _revoked(key=None):

@@ -68,7 +68,6 @@ from .knowledge_engine import (
 
 from .open_loops import OpenLoop, OpenLoopStatus, OpenLoopTracker
 from .suppression import SuppressionController, SuppressionRule, SuppressionScope
-from .governor import BehavioralGovernor, GovernorDecision, GovernorVerdict
 from .self_history import ActionOutcome, AgentSelfHistoryTracker, SelfHistoryRecord
 from .profile import (
     AttributeSpec,
@@ -157,9 +156,6 @@ __all__ = [
     "SuppressionScope",
     "SuppressionRule",
     "SuppressionController",
-    "GovernorVerdict",
-    "GovernorDecision",
-    "BehavioralGovernor",
     "ActionOutcome",
     "SelfHistoryRecord",
     "AgentSelfHistoryTracker",
