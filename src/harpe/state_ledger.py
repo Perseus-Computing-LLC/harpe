@@ -14,6 +14,13 @@ so the other nine abilities get byte-identical prompts; (2) it guarantees both s
 even when retrieval selected only one; (3) the header it emits quotes the two statements with their dates and
 contains no instruction text at all - no "conflict", no "note", no "possible", no brackets.
 
+Round 9 opens the verb vocabulary. Round 8's miss analysis found 30 of the 39 unpaired contradiction questions
+used a verb outside the 17-word list (``deployed``, ``migrated``, ``upgraded`` ...). AFFIRM now accepts
+``I've <participle>`` for any participle-shaped word and DENY accepts ``I've never <word>`` / ``haven't <word>``,
+both tolerating one adverb (``actually``, ``really``, ``ever`` ...). The wider net is paid for at pairing time: an
+affirmation and a denial pair only when they share the same (stemmed) verb or at least two specific content words,
+so generic overlap (``project``, ``work``, ``during``) cannot pair two unrelated statements.
+
 Everything here is lexical and deterministic. Freeze the file by SHA-256 before any paid inference.
 """
 
@@ -29,21 +36,47 @@ _VERBS = (
     r"signed|updated|purchased|taken"
 )
 _SUBJ = r"(?:i(?:'ve| have)?|we(?:'ve| have)?)"
+# One optional adverb between the subject (or the negation) and the verb: "I've actually finished", "haven't really".
+_ADV = r"(?:actually\s+|really\s+|ever\s+|already\s+|recently\s+|just\s+|finally\s+|personally\s+)?"
+# A participle-shaped word: the open-vocabulary affirmation verb. "not" is excluded so "I've not done" is a denial;
+# the trailing (?!') keeps "haven" out of "I haven't".
+_PARTICIPLE = r"(?!not\b)(\w+(?:ed|en|t|wn|ne|de|lt))\b(?!')"
 
 AFFIRM = (
-    re.compile(rf"\b{_SUBJ}\s+(?:{_VERBS})\b", re.IGNORECASE),
+    re.compile(rf"\b{_SUBJ}\s+{_ADV}{_PARTICIPLE}", re.IGNORECASE),  # I've <participle>; group 1 = verb
     re.compile(rf"\b(?:i|we)\s+(?:always|usually)\b", re.IGNORECASE),
     re.compile(rf"\byes,?\s+{_SUBJ}\b", re.IGNORECASE),
 )
 DENY = (
-    re.compile(rf"\b{_SUBJ}\s+(?:never|not yet)\s+(?:{_VERBS})\b", re.IGNORECASE),
+    re.compile(rf"\b{_SUBJ}\s+(?:never|not yet|not)\s+{_ADV}(\w+)\b", re.IGNORECASE),  # I've never <word>; group 1
+    re.compile(rf"\b(?:haven't|have not|didn't|did not|never)\s+{_ADV}(\w+)\b", re.IGNORECASE),  # group 1 = verb
     re.compile(rf"\b(?:i|we)\s+(?:never|rarely)\b", re.IGNORECASE),
-    re.compile(rf"\b(?:haven't|have not|didn't|did not|never)\s+(?:{_VERBS})\b", re.IGNORECASE),
     re.compile(r"\b(?:refused to|decided against|avoided)\b", re.IGNORECASE),
 )
 # The question gate. A header is only considered for questions that ask about the user's own past action or state.
 QUESTION_GATE = re.compile(r"^(?:have (?:i|you)|has [a-z]+|do i|did i|how experienced am i)\b", re.IGNORECASE)
 MIN_SHARED = 2  # content words the question, the claim and the denial must all share
+# Words that two statements can share without being about the same thing; a pair needs the same verb or two
+# shared words outside this set.
+GENERIC = frozenset("project any this that some really actually ever before during yet thing things work "
+                    "time way one also just still even much many more".split())
+_SUFFIXES = ("ations", "ation", "ings", "ing", "ies", "ied", "ers", "er", "ed", "es", "s")
+
+
+def stem(word: str) -> str:
+    """Crude suffix stemmer, enough to match 'deployed' with 'deploying' and 'deploy'."""
+    for s in _SUFFIXES:
+        if word.endswith(s) and len(word) - len(s) >= 3:
+            return word[: -len(s)]
+    return word
+
+
+def _verb_of(sentence: str, patterns: Sequence["re.Pattern[str]"]) -> str:
+    for p in patterns:
+        m = p.search(sentence)
+        if m and m.groups() and m.group(1):
+            return stem(m.group(1).lower())
+    return ""
 
 _STOP = frozenset("the a an in on at of to for with by from is was are were and or but so that it this have has had "
                   "been be".split())
@@ -64,6 +97,7 @@ class Claim(BaseModel):
     polarity: int = Field(ge=-1, le=1)
     text: str
     words: frozenset = Field(default_factory=frozenset)
+    verb: str = ""  # stemmed verb the pattern matched, "" when the pattern has no verb group
 
     model_config = {"arbitrary_types_allowed": True, "frozen": True}
 
@@ -90,6 +124,13 @@ def _user_sentences(text: str) -> Iterable[str]:
         yield from _SENTENCE_END.split(" ".join(span))
 
 
+def _same_matter(a: Claim, d: Claim, shared: frozenset) -> bool:
+    """Same stemmed verb on both sides, or at least two shared words outside GENERIC."""
+    if a.verb and a.verb == d.verb:
+        return True
+    return sum(1 for w in shared if w not in GENERIC) >= 2
+
+
 class StateLedger:
     """Index user claims from dialogue units; pair an affirmation with a denial when a gated question asks."""
 
@@ -108,7 +149,8 @@ class StateLedger:
             if aff == den:  # neither, or both in one sentence: not a clean claim
                 continue
             self.claims.append(Claim(unit_id=unit_id, date=date or "", polarity=1 if aff else -1, text=sentence,
-                                     words=content_words(sentence)))
+                                     words=content_words(sentence),
+                                     verb=_verb_of(sentence, AFFIRM if aff else DENY)))
         return len(self.claims) - before
 
     def add_units(self, units: Mapping[str, Tuple[str, str]]) -> int:
@@ -129,7 +171,7 @@ class StateLedger:
         for a, ao in aff:
             for d, do in den:
                 shared = ao & do
-                if len(shared) >= MIN_SHARED and a.unit_id != d.unit_id:
+                if len(shared) >= MIN_SHARED and a.unit_id != d.unit_id and _same_matter(a, d, shared):
                     pairs.append(StatePair(affirm=a, deny=d, shared=tuple(sorted(shared))))
         pairs.sort(key=lambda p: -len(p.shared))  # stable: ties keep index order
         return pairs
@@ -161,5 +203,5 @@ def header(pairs: Sequence[StatePair], max_pairs: int = 2, max_words: int = 40) 
     return "\n".join(lines)
 
 
-__all__ = ["AFFIRM", "DENY", "QUESTION_GATE", "MIN_SHARED", "Claim", "StatePair", "StateLedger", "content_words",
-           "header"]
+__all__ = ["AFFIRM", "DENY", "QUESTION_GATE", "MIN_SHARED", "GENERIC", "Claim", "StatePair", "StateLedger",
+           "content_words", "header", "stem"]
