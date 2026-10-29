@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- H-R3: typed sidecar for `confidential` and `scope` flags on DTOC compressed blocks. Artifacts and
+  placeholder headers preserve `confidential=true` and `scope=<scope>`; `to_context_item()` converts
+  artifacts to `ContextItem` with matching sensitivity and scope metadata, surviving compaction round-trips.
+- H-R4: killed-process (exit 143 / SIGTERM) outputs automatically marked `partial=true` and annotated with
+  truncation/partial preview headers. Exit code and truncation markers preserved through DTOC placeholders.
 - H-R2: role-typed serialization. `SynthesisReport.to_messages()` returns one `{role, id, content}` per
   included item, in order, never merged, so a tool output that contains a forged `user:` or `system:` turn
   stays a tool message. `to_context_str()` / `render()` keep the old join when every item shares one role; with
