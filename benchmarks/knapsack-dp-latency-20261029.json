@@ -1,0 +1,59 @@
+{
+  "harpe": "0.1.0a11",
+  "native": "0.1.0-alpha.11",
+  "python": "3.12.13",
+  "machine": "x86_64",
+  "repeat": 5,
+  "seed": 20261029,
+  "note": "best-of-N wall time per kernel on identical seeded instances; both kernels chose the same set on every row",
+  "rows": [
+    {
+      "label": "plugin-turn   n=40   cap=4,000  (160k cells)",
+      "n": 40,
+      "capacity": 4000,
+      "cells": 160040,
+      "python_best_s": 0.001678,
+      "python_median_s": 0.001712,
+      "native_best_s": 0.000226,
+      "native_median_s": 0.000227,
+      "speedup_best": 7.4,
+      "same_selection": true
+    },
+    {
+      "label": "large-turn    n=120  cap=8,000  (960k cells)",
+      "n": 120,
+      "capacity": 8000,
+      "cells": 960120,
+      "python_best_s": 0.010962,
+      "python_median_s": 0.011074,
+      "native_best_s": 0.001381,
+      "native_median_s": 0.001437,
+      "speedup_best": 7.9,
+      "same_selection": true
+    },
+    {
+      "label": "wide-window   n=200  cap=16,000 (3.2M cells)",
+      "n": 200,
+      "capacity": 16000,
+      "cells": 3200200,
+      "python_best_s": 0.036441,
+      "python_median_s": 0.03707,
+      "native_best_s": 0.004807,
+      "native_median_s": 0.004986,
+      "speedup_best": 7.6,
+      "same_selection": true
+    },
+    {
+      "label": "at-the-cap    n=250  cap=19,999 (5.0M cells)",
+      "n": 250,
+      "capacity": 19999,
+      "cells": 5000000,
+      "python_best_s": 0.058391,
+      "python_median_s": 0.058969,
+      "native_best_s": 0.007701,
+      "native_median_s": 0.007927,
+      "speedup_best": 7.6,
+      "same_selection": true
+    }
+  ]
+}

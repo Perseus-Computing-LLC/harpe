@@ -6,6 +6,7 @@ import hashlib
 import math
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from . import _native
 from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .routing import (
@@ -73,6 +74,8 @@ class ContextBudgetEngine(ContextSynthesizer):
     ) -> None:
         self.token_counter = token_counter or HeuristicTokenCounter()
         self.hooks: List[PruningHook] = list(hooks or [])
+        # Which knapsack kernel the last synthesize() ran ("native" | "python" | "greedy"); see _solve_knapsack_dp.
+        self._knapsack_trace: Dict[str, Any] = {}
 
     def route(self, items: Iterable[Union[ContextItem, str]], threshold_tokens: Optional[int]) -> RouteDecision:
         """:func:`harpe.routing.route_by_fit` with this engine's token counter: whether to hand a whole
@@ -208,8 +211,13 @@ class ContextBudgetEngine(ContextSynthesizer):
         utilities: List[float],
         capacity: int,
         max_cells: int = 5_000_000,
+        trace: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[ContextItem], List[ContextItem]]:
         """Select items of maximum total utility whose token counts sum to at most ``capacity``.
+
+        ``trace``, when given, receives ``{"solver": "native" | "python" | "greedy"}`` naming the kernel that
+        ran: the exact DP in the Rust crate through ``harpe_native`` (issue #11), the exact DP in Python
+        (no extension, or ``HARPE_PURE_PYTHON=1``), or the greedy fallback above ``max_cells``.
 
         Items heavier than the whole capacity are rejected up front: they could never be chosen and their DP
         rows would change nothing. When the remaining weights share a common divisor the weights and the
@@ -233,11 +241,17 @@ class ContextBudgetEngine(ContextSynthesizer):
         reduced_capacity = capacity // divisor
 
         if len(fit) * (reduced_capacity + 1) <= max_cells:
-            chosen = cls._exact_knapsack(
-                [weights[i] // divisor for i in fit], [utilities[i] for i in fit], reduced_capacity
-            )
+            fit_weights = [weights[i] // divisor for i in fit]
+            fit_utilities = [utilities[i] for i in fit]
+            if _native.enabled():
+                chosen = _native.exact_knapsack(fit_weights, fit_utilities, reduced_capacity)
+                solver = "native"
+            else:
+                chosen = cls._exact_knapsack(fit_weights, fit_utilities, reduced_capacity)
+                solver = "python"
             take = {fit[k] for k in chosen}
         else:
+            solver = "greedy"
             # Dantzig density order, then fill whatever slack is left in plain utility order: density alone
             # can skip a small high-utility item that would still have fit.
             order = sorted(range(n), key=lambda i: (-utilities[i] / weights[i], i))
@@ -251,6 +265,8 @@ class ContextBudgetEngine(ContextSynthesizer):
                     take.add(i)
                     used += weights[i]
 
+        if trace is not None:
+            trace["solver"] = solver
         selected_items = [items[i] for i in range(n) if i in take]
         pruned_items = [items[i] for i in range(n) if i not in take]
         return selected_items, pruned_items
@@ -389,7 +405,7 @@ class ContextBudgetEngine(ContextSynthesizer):
                 self._compute_item_utility(it, is_temporal=is_temporal, temporal_boost=temporal_boost, now=reference_time)
                 for it in items
             ]
-            return self._solve_knapsack_dp(items, utilities, capacity)
+            return self._solve_knapsack_dp(items, utilities, capacity, trace=self._knapsack_trace)
 
         if policy == PrunePolicy.DUO_ATTENTION:
             # DuoAttention: attention sinks (oldest four) and the local window (newest four) are taken first in
@@ -411,7 +427,7 @@ class ContextBudgetEngine(ContextSynthesizer):
                 self._compute_item_utility(it, is_temporal=is_temporal, temporal_boost=temporal_boost, now=reference_time)
                 for it in middle
             ]
-            chosen_middle, _ = self._solve_knapsack_dp(middle, utilities, capacity)
+            chosen_middle, _ = self._solve_knapsack_dp(middle, utilities, capacity, trace=self._knapsack_trace)
             included = guaranteed + chosen_middle
             kept = {id(it) for it in included}
             return included, [it for it in items if id(it) not in kept]
@@ -513,6 +529,7 @@ class ContextBudgetEngine(ContextSynthesizer):
         policy_digest = policy_hasher.hexdigest() if pinned_items else "empty_policy"
 
         control_overflow = pinned_tokens > available_capacity
+        self._knapsack_trace = {}
         if pinned_tokens >= available_capacity:
             # Nothing else fits. Pinned items are kept even over the ceiling, so say so in the report rather
             # than hiding it behind budget_remaining=0; strict callers get an exception instead.
@@ -550,6 +567,7 @@ class ContextBudgetEngine(ContextSynthesizer):
             overflow_tokens=overflow,
             control_overflow=control_overflow,
             pinned_policy_digest=policy_digest,
+            knapsack_solver=self._knapsack_trace.get("solver"),
             effective_budget=available_capacity,
             reference_time=reference_time,
             dimension_counts=dim_counts,

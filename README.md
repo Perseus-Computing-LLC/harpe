@@ -79,7 +79,16 @@ Try it without installing anything: [telarch.ai/harpe](https://telarch.ai/harpe)
 
 Medians of five runs of [telarch-benchmarks](https://github.com/Perseus-Computing-LLC/telarch-benchmarks) v0.1.0-alpha.10, built against harpe 0.1.0-alpha.11, with synthetic data on one EC2 m8azn.metal-12xl bare-metal server. Every run, its range and the command that reproduces it are on [telarch.ai/evidence](https://telarch.ai/evidence).
 
-All of these numbers are for the **Rust crate's greedy `LowestPriority` policy** (`knapsack_cost_curve` in telarch-benchmarks). The Python `KNAPSACK_DP` and `DUO_ATTENTION` policies solve an exact 0/1 knapsack and have not been timed on this hardware; expect milliseconds, not microseconds, for hundreds of items against a large budget.
+All of these numbers are for the **Rust crate's greedy `LowestPriority` policy** (`knapsack_cost_curve` in telarch-benchmarks). The Python `KNAPSACK_DP` and `DUO_ATTENTION` policies solve an exact 0/1 knapsack; their kernel is timed separately below.
+
+**Exact knapsack kernel** (`benchmarks/knapsack_dp_latency.py`, best of 5 on identical seeded instances, 13th-gen Core i5 developer container, not the EC2 harness; `benchmarks/knapsack-dp-latency-20261029.json`). With the `harpe_native` extension installed (`bindings/python`) the same DP runs in the Rust crate and chooses the same set on every instance; without it, or with `HARPE_PURE_PYTHON=1`, the Python kernel runs.
+
+| Instance | Cells | Python kernel | Rust kernel (`harpe_native`) |
+|---|---|---|---|
+| 40 items, 4,000-token headroom | 160k | 1.7 ms | 0.23 ms |
+| 120 items, 8,000 | 960k | 11.0 ms | 1.4 ms |
+| 200 items, 16,000 | 3.2M | 36 ms | 4.8 ms |
+| 250 items, 19,999 (the 5M cap) | 5.0M | 58 ms | 7.7 ms |
 
 | Measurement (Rust, greedy `LowestPriority`) | Result |
 | --- | --- |

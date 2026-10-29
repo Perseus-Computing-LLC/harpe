@@ -1,0 +1,18 @@
+[package]
+name = "harpe-native"
+version = "0.1.0-alpha.11"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Perseus Computing LLC <contact@perseuscomputing.com>"]
+description = "Python extension exposing the harpe Rust kernels (exact 0/1 knapsack) to the harpe Python package."
+license = "MIT"
+repository = "https://github.com/Perseus-Computing-LLC/harpe"
+publish = false
+
+[lib]
+name = "harpe_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+harpe = { path = "../.." }
+pyo3 = { version = "0.30", features = ["extension-module"] }
