@@ -38,7 +38,7 @@ def test_named_possessive_kin_is_someone_else_despite_earlier_i():
         ("I spent the day with Claire, and Claire's father is visiting next week.", "father"),
         ("I was with Dan and his mother is visiting.", "mother"),
         ("I met the couple and their daughter starts school soon.", "daughter"),
-        ("The company sent me a card and its founder's wife signed it.", "wife"),
+        ("I checked on the rescue puppy and its mother is still at the shelter.", "mother"),
     ]:
         assert _about_someone_else(text, _start(text, noun)) is True, text
 

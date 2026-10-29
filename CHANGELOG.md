@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ContextItem.role` is validated: `system`, `user`, `assistant`, `tool` or `context`. A role that is not one of
   these cannot be serialized faithfully, so it is refused at construction.
 
+### Fixed
+- `ProfileLedger`: a kinship noun owned by a named third party or by "its" ("Claire's father lives in Boston now",
+  "its mother") is read as theirs, the same as "her father" already was, whatever came earlier in the sentence.
+  Before, `_about_someone_else` only knew the pronoun forms, so such a sentence could be recorded as the user's
+  own residence, career or parent.
+- `ProfileLedger`: a singular sibling denial ("I don't have a sister", "I never had a brother or a sister") is
+  read as has:no. Before, only the plural forms were, so the sentence was read as one sister (has:yes, count:1)
+  and rendered as matching an earlier "my sister ..." record instead of as a later conflicting claim. A denial
+  of one kind next to a count of another ("I don't have a sister, but I have two brothers") still reads as
+  has:yes with that count. One MemConflict replay question moves accordingly (listed in the test).
+
 ## [0.1.0-alpha.10] - 2026-10-28
 
 Repair set from the 2026-10-28 review. Each item is one commit on `fix/review-2026-10-28` and ships with a regression
