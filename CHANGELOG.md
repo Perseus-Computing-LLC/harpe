@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.11] - 2026-10-29
+
+Phase P3 (Harpe compaction and synthesis) of the Telarch roadmap.
+
 ### Added
 - H-R1: preflight-reserve invariant block + system policy as untouchable control budget.
   `SynthesisReport.pinned_policy_digest` stamps deterministic SHA-256 digest of pinned/invariant

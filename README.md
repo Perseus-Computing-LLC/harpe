@@ -27,17 +27,17 @@ Agents collect instructions, memory, documents and tool output faster than a mod
 
 ## Install
 
-This README describes 0.1.0-alpha.10 (0.1.0a10 on PyPI). It is a pre-release, so name the version.
+This README describes 0.1.0-alpha.11 (0.1.0a11 on PyPI). It is a pre-release, so name the version.
 
 ```toml
 # Rust: Cargo.toml
 [dependencies]
-harpe = "0.1.0-alpha.10"
+harpe = "0.1.0-alpha.11"
 ```
 
 ```bash
 # Python
-pip install harpe==0.1.0a10
+pip install harpe==0.1.0a11
 ```
 
 ## Quickstart
