@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -52,6 +53,14 @@ class BudgetOverflowError(ValueError):
             f"pinned items use {report.consumed_tokens} tokens against a ceiling of {report.effective_budget}: "
             f"{report.overflow_tokens} over"
         )
+
+
+class ControlOverflowError(BudgetOverflowError):
+    """Raised when untouchable control budget (invariants + system policy) exceeds available capacity.
+
+    Fails closed to prevent truncation or silent drop of operational policies (H-R1).
+    """
+    pass
 
 
 class ContextBudgetEngine(ContextSynthesizer):
@@ -497,6 +506,13 @@ class ContextBudgetEngine(ContextSynthesizer):
         unpinned_items = [it for it in resolved_items if not self._is_never_pruned(it)]
         pinned_tokens = sum(it.token_count for it in pinned_items)
 
+        # Compute canonical pinned_policy_digest over pinned and invariant items (H-R1)
+        policy_hasher = hashlib.sha256()
+        for it in sorted(pinned_items, key=lambda x: (x.role, str(x.dimension or ""), str(x.id), str(x.content))):
+            policy_hasher.update(f"{it.role}:{it.dimension}:{it.id}:{it.content}\n".encode("utf-8"))
+        policy_digest = policy_hasher.hexdigest() if pinned_items else "empty_policy"
+
+        control_overflow = pinned_tokens > available_capacity
         if pinned_tokens >= available_capacity:
             # Nothing else fits. Pinned items are kept even over the ceiling, so say so in the report rather
             # than hiding it behind budget_remaining=0; strict callers get an exception instead.
@@ -532,12 +548,16 @@ class ContextBudgetEngine(ContextSynthesizer):
             dynamic_budget_expanded=dynamic_budget_expanded,
             over_budget=overflow > 0,
             overflow_tokens=overflow,
+            control_overflow=control_overflow,
+            pinned_policy_digest=policy_digest,
             effective_budget=available_capacity,
             reference_time=reference_time,
             dimension_counts=dim_counts,
             dimension_tokens=dim_tokens,
         )
         if strict and overflow > 0:
+            if control_overflow:
+                raise ControlOverflowError(report)
             raise BudgetOverflowError(report)
         for hook in self.hooks:
             hook.post_prune(report)

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- H-R1: preflight-reserve invariant block + system policy as untouchable control budget.
+  `SynthesisReport.pinned_policy_digest` stamps deterministic SHA-256 digest of pinned/invariant
+  policy items; `control_overflow` flag records when invariants exceed available context, and
+  `ControlOverflowError` fails closed under `strict=True`.
 - H-R3: typed sidecar for `confidential` and `scope` flags on DTOC compressed blocks. Artifacts and
   placeholder headers preserve `confidential=true` and `scope=<scope>`; `to_context_item()` converts
   artifacts to `ContextItem` with matching sensitivity and scope metadata, surviving compaction round-trips.
