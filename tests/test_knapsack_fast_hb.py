@@ -136,7 +136,11 @@ def test_common_divisor_reduction_is_lossless():
 
 def test_synthesize_200_items_at_8000_tokens_is_fast():
     """200 items with 20-400 tokens each against an 8,000-token ceiling: n*(capacity+1) = 1.6M cells, well
-    inside the exact path. Before H-B the double loop took ~52 ms here; the bound is half of that."""
+    inside the exact path. The bound is relative, not a wall-clock figure: the fast DP must take at most 60 %
+    of the textbook double loop on the same instance in the same process (0.32 on the development host,
+    0.39 against the pre-H-B one-row loop), because an absolute millisecond bound depends on the runner.
+    The release run for v0.1.0-alpha.11 failed on a 26 ms bound that a GitHub runner on CPython 3.12 took 50 ms
+    to meet."""
     rng = random.Random(1234)
     items = [
         ContextItem(
@@ -152,12 +156,24 @@ def test_synthesize_200_items_at_8000_tokens_is_fast():
     engine = ContextBudgetEngine()
     budget = TokenBudget(total_budget=8000)
     assert budget.available_context == 8000
-    engine.synthesize(items, budget, PrunePolicy.KNAPSACK_DP)  # warm-up
-    timings = []
-    for _ in range(5):
-        start = time.perf_counter()
-        report = engine.synthesize(items, budget, PrunePolicy.KNAPSACK_DP)
-        timings.append(time.perf_counter() - start)
+    report = engine.synthesize(items, budget, PrunePolicy.KNAPSACK_DP)
     assert report.consumed_tokens <= 8000
     assert 8000 - report.consumed_tokens < max(it.token_count for it in items)
-    assert min(timings) < 0.026, f"best of 5 synthesize runs took {min(timings) * 1000:.1f} ms"
+
+    weights = [it.token_count for it in items]
+    utilities = [rng.random() * 100 for _ in items]
+    assert ContextBudgetEngine._exact_knapsack(weights, utilities, 8000) == reference_knapsack(weights, utilities, 8000)
+
+    def best_of(fn, runs=5):
+        fn()  # warm-up
+        return min(_timed(fn) for _ in range(runs))
+
+    slow = best_of(lambda: reference_knapsack(weights, utilities, 8000))
+    fast = best_of(lambda: ContextBudgetEngine._exact_knapsack(weights, utilities, 8000))
+    assert fast <= 0.6 * slow, f"fast DP {fast * 1000:.1f} ms vs textbook {slow * 1000:.1f} ms (ratio {fast / slow:.2f})"
+
+
+def _timed(fn):
+    start = time.perf_counter()
+    fn()
+    return time.perf_counter() - start

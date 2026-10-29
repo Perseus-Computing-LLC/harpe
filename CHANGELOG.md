@@ -44,7 +44,9 @@ Phase P3 (Harpe compaction and synthesis) of the Telarch roadmap.
   with only the mixed blocks scanned cell by cell. 200 items of 20-400 tokens at an 8,000-token ceiling went
   from 52 ms to 20.5 ms per `synthesize` (Python 3.14, same host); `tests/test_knapsack_fast_hb.py` checks
   selection equality against a two-dimensional reference table on 120 seeded instances, including ties, pinned
-  items, oversize items and shared divisors, and holds the timing under 26 ms.
+  items, oversize items and shared divisors, and holds the fast DP at or under 60 % of the textbook double
+  loop on the same instance (a relative bound; the first alpha.11 release run failed an absolute 26 ms bound on
+  a GitHub runner, and the tag was re-cut at this commit before anything was published).
 
 ### Fixed
 - `ProfileLedger`: a kinship noun owned by a named third party or by "its" ("Claire's father lives in Boston now",
