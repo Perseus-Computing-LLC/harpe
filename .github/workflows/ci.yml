@@ -80,6 +80,16 @@ jobs:
           "$RUNNER_TEMP/smoke/bin/python" -m pip install dist/*.whl
           "$RUNNER_TEMP/smoke/bin/python" -c "import platform, harpe; print(platform.system(), platform.machine(), 'harpe', harpe.__version__)"
 
+      # The native-kernel tests (tests/test_native_knapsack.py) need harpe_native importable; under
+      # CI=true a missing extension fails them instead of skipping.
+      - name: Build and install the harpe_native extension
+        shell: bash
+        run: |
+          pip install maturin
+          (cd bindings/python && maturin build --release --locked --out "$RUNNER_TEMP/native-wheel")
+          pip install "$RUNNER_TEMP"/native-wheel/*.whl
+          python -c "import harpe_native as n; print('harpe_native', n.crate_version())"
+
       - name: Run pytest
         run: |
           pytest tests -v

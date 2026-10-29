@@ -174,6 +174,14 @@ class SynthesisReport(BaseModel):
         default="",
         description="SHA-256 digest over the pinned and invariant items in the context window (H-R1).",
     )
+    knapsack_solver: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which kernel solved the exact 0/1 DP when KNAPSACK_DP or DUO_ATTENTION ran under the cell cap: "
+            "'native' (harpe_native, the Rust crate) or 'python'; 'greedy' when the instance exceeded the cap; "
+            "None for the other policies."
+        ),
+    )
     effective_budget: int = Field(
         default=0,
         ge=0,

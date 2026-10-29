@@ -51,7 +51,9 @@
 //! println!("Remaining tokens: {}", report.budget_remaining);
 //! ```
 
+pub mod knapsack;
 pub mod state_ledger;
+pub use knapsack::{exact_knapsack, KnapsackError};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

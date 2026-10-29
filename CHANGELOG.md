@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `harpe::exact_knapsack` (`src/knapsack.rs`): the exact 0/1 knapsack kernel behind the Python engine's
+  `KNAPSACK_DP` and `DUO_ATTENTION` policies, in the crate, with the Python kernel's strict-improvement tie
+  rule and float order (#11).
+- `bindings/python`: `harpe_native`, a pyo3 extension exposing `exact_knapsack` and `crate_version`.
+  Optional; the pure-Python package does not depend on it. `ContextBudgetEngine._solve_knapsack_dp` runs the
+  Rust kernel when it is importable and the Python kernel otherwise or under `HARPE_PURE_PYTHON=1`;
+  `SynthesisReport.knapsack_solver` (`"native"` | `"python"` | `"greedy"` | `None`) names what ran.
+  `tests/test_native_knapsack.py` holds the two kernels to identical selections; CI builds the wheel before
+  pytest and fails, not skips, when it is missing.
+- `benchmarks/knapsack_dp_latency.py` and the first published latency for the exact-DP path (README):
+  1.7 ms → 0.23 ms at 160k cells, 58 ms → 7.7 ms at the 5M-cell cap, Python → Rust kernel.
+
 ## [0.1.0-alpha.11] - 2026-10-29
 
 Phase P3 (Harpe compaction and synthesis) of the Telarch roadmap.
