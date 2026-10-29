@@ -1,8 +1,8 @@
 """harpe: Deterministic context synthesis and token budgeting for cognitive AI agents."""
 
-from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
+from .models import CognitiveDimension, ContextItem, MixedRoleRenderError, PrunePolicy, SynthesisReport, TokenBudget
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
-from .engine import BudgetOverflowError, ContextBudgetEngine, HeuristicTokenCounter
+from .engine import BudgetOverflowError, ContextBudgetEngine, ControlOverflowError, HeuristicTokenCounter
 from .tokenizers import TiktokenCounter, tiktoken_available
 from .dtoc import CompressedToolOutput, DynamicToolCompressor, LRUArtifactStore
 from .prompts import format_official_cot_prompt, format_qa_prompt
@@ -68,7 +68,6 @@ from .knowledge_engine import (
 
 from .open_loops import OpenLoop, OpenLoopStatus, OpenLoopTracker
 from .suppression import SuppressionController, SuppressionRule, SuppressionScope
-from .governor import BehavioralGovernor, GovernorDecision, GovernorVerdict
 from .self_history import ActionOutcome, AgentSelfHistoryTracker, SelfHistoryRecord
 from .profile import (
     AttributeSpec,
@@ -82,6 +81,7 @@ from .profile import (
 __version__ = "0.1.0a10"
 
 __all__ = [
+    "MixedRoleRenderError",
     "CognitiveDimension",
     "ContextItem",
     "PrunePolicy",
@@ -91,6 +91,7 @@ __all__ = [
     "PruningHook",
     "TokenCounter",
     "BudgetOverflowError",
+    "ControlOverflowError",
     "ContextBudgetEngine",
     "HeuristicTokenCounter",
     "TiktokenCounter",
@@ -156,9 +157,6 @@ __all__ = [
     "SuppressionScope",
     "SuppressionRule",
     "SuppressionController",
-    "GovernorVerdict",
-    "GovernorDecision",
-    "BehavioralGovernor",
     "ActionOutcome",
     "SelfHistoryRecord",
     "AgentSelfHistoryTracker",

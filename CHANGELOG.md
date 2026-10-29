@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- H-R1: preflight-reserve invariant block + system policy as untouchable control budget.
+  `SynthesisReport.pinned_policy_digest` stamps deterministic SHA-256 digest of pinned/invariant
+  policy items; `control_overflow` flag records when invariants exceed available context, and
+  `ControlOverflowError` fails closed under `strict=True`.
+- H-R3: typed sidecar for `confidential` and `scope` flags on DTOC compressed blocks. Artifacts and
+  placeholder headers preserve `confidential=true` and `scope=<scope>`; `to_context_item()` converts
+  artifacts to `ContextItem` with matching sensitivity and scope metadata, surviving compaction round-trips.
+- H-R4: killed-process (exit 143 / SIGTERM) outputs automatically marked `partial=true` and annotated with
+  truncation/partial preview headers. Exit code and truncation markers preserved through DTOC placeholders.
+- H-R2: role-typed serialization. `SynthesisReport.to_messages()` returns one `{role, id, content}` per
+  included item, in order, never merged, so a tool output that contains a forged `user:` or `system:` turn
+  stays a tool message. `to_context_str()` / `render()` keep the old join when every item shares one role; with
+  mixed roles they now fence each item in a `<harpe-role name=... id=... fence=NONCE>` block under a nonce drawn
+  per render (content produced before the render cannot forge the closing tag), raise `MixedRoleRenderError`
+  with `mixed_roles="error"`, or flatten only with `mixed_roles="flatten"`. `fence_nonce=` fixes the nonce
+  for a reproducible render.
+
+### Changed
+- H-E: unexport `BehavioralGovernor`, `GovernorDecision`, `GovernorVerdict` from `harpe` root.
+  Decided: stop exporting as a safety control until backed by a formal policy engine; documented
+  re-entry criteria in `src/harpe/governor.py`. Modules remain accessible via `from harpe.governor import ...`.
+- `ContextItem.role` is validated: `system`, `user`, `assistant`, `tool` or `context`. A role that is not one of
+  these cannot be serialized faithfully, so it is refused at construction.
+- H-B: the exact 0/1 knapsack behind `KNAPSACK_DP` and `DUO_ATTENTION` is about 2.5x faster with identical
+  selections. It still evaluates the textbook one-row recurrence in input order with the same strict-improvement
+  tie rule, but no longer visits every cell one at a time: items heavier than the capacity are rejected before
+  the table is built, weights and capacity are divided by their common divisor when there is one (lossless),
+  cells outside the reachable prefix or the backtrace suffix are skipped, and because the row is monotone two
+  comparisons per block decide whether a block of cells changes entirely (filled by a slice) or not at all,
+  with only the mixed blocks scanned cell by cell. 200 items of 20-400 tokens at an 8,000-token ceiling went
+  from 52 ms to 20.5 ms per `synthesize` (Python 3.14, same host); `tests/test_knapsack_fast_hb.py` checks
+  selection equality against a two-dimensional reference table on 120 seeded instances, including ties, pinned
+  items, oversize items and shared divisors, and holds the timing under 26 ms.
+
+### Fixed
+- `ProfileLedger`: a kinship noun owned by a named third party or by "its" ("Claire's father lives in Boston now",
+  "its mother") is read as theirs, the same as "her father" already was, whatever came earlier in the sentence.
+  Before, `_about_someone_else` only knew the pronoun forms, so such a sentence could be recorded as the user's
+  own residence, career or parent.
+- `ProfileLedger`: a singular sibling denial ("I don't have a sister", "I never had a brother or a sister") is
+  read as has:no. Before, only the plural forms were, so the sentence was read as one sister (has:yes, count:1)
+  and rendered as matching an earlier "my sister ..." record instead of as a later conflicting claim. A denial
+  of one kind next to a count of another ("I don't have a sister, but I have two brothers") still reads as
+  has:yes with that count. One MemConflict replay question moves accordingly (listed in the test).
+
 ## [0.1.0-alpha.10] - 2026-10-28
 
 Repair set from the 2026-10-28 review. Each item is one commit on `fix/review-2026-10-28` and ships with a regression

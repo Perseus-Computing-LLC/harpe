@@ -28,13 +28,34 @@ class CompressedToolOutput(BaseModel):
     raw_byte_size: int = Field(ge=0, description="Size of uncompressed payload in bytes.")
     raw_lines: int = Field(ge=0, description="Total line count of uncompressed payload.")
     created_at: float = Field(default_factory=time.time, description="Creation timestamp.")
+    confidential: bool = Field(default=False, description="Whether output is confidential (withheld from remote destinations).")
+    scope: Optional[str] = Field(default=None, description="Tenant or project isolation scope.")
+    exit_code: Optional[int] = Field(default=None, description="Process exit code if output was from a command.")
+    partial: bool = Field(default=False, description="Whether output is truncated or partial (e.g. killed process exit 143).")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Execution metadata.")
 
     def format_placeholder(self) -> str:
         """Render the compact, structured placeholder inserted into active context."""
+        tokens = [
+            f"ref={self.ref_id}",
+            f"tool={self.tool_name}",
+            f"lines={self.raw_lines}",
+            f"bytes={self.raw_byte_size}",
+        ]
+        if self.confidential or bool(self.metadata.get("confidential")):
+            tokens.append("confidential=true")
+        scope_val = self.scope or self.metadata.get("scope")
+        if scope_val:
+            tokens.append(f"scope={scope_val}")
+        ec = self.exit_code if self.exit_code is not None else self.metadata.get("exit_code")
+        if ec is not None:
+            tokens.append(f"exit_code={ec}")
+        if self.partial or bool(self.metadata.get("partial")) or ec == 143:
+            tokens.append("partial=true")
+
+        header = " ".join(tokens)
         return (
-            f"[TOOL_OUTPUT_COMPRESSED: ref={self.ref_id} tool={self.tool_name} "
-            f"lines={self.raw_lines} bytes={self.raw_byte_size}]\n"
+            f"[TOOL_OUTPUT_COMPRESSED: {header}]\n"
             f"Summary: {self.summary}\n"
             f"[Use ref='{self.ref_id}' to request full uncompressed expansion if needed]"
         )
@@ -130,11 +151,40 @@ class DynamicToolCompressor:
         """Artifacts dropped to stay under the cap since construction."""
         return getattr(self._store, "evictions", 0)
 
+    @classmethod
+    def parse_placeholder(cls, text: str) -> Optional[Dict[str, Any]]:
+        """Parse structured header tokens from a [TOOL_OUTPUT_COMPRESSED: ...] placeholder."""
+        import re
+        m = re.search(r"\[TOOL_OUTPUT_COMPRESSED:\s+([^\]]+)\]", text)
+        if not m:
+            return None
+        tokens = m.group(1).split()
+        result: Dict[str, Any] = {}
+        for t in tokens:
+            if "=" in t:
+                k, v = t.split("=", 1)
+                if v.lower() == "true":
+                    result[k] = True
+                elif v.lower() == "false":
+                    result[k] = False
+                elif k in ("lines", "bytes", "exit_code"):
+                    try:
+                        result[k] = int(v)
+                    except ValueError:
+                        result[k] = v
+                else:
+                    result[k] = v
+        return result
+
     def maybe_compress(
         self,
         tool_name: str,
         output: str,
         metadata: Optional[Dict[str, Any]] = None,
+        confidential: bool = False,
+        scope: Optional[str] = None,
+        exit_code: Optional[int] = None,
+        partial: bool = False,
     ) -> tuple[str, Optional[CompressedToolOutput]]:
         """Compress tool output if it exceeds threshold, otherwise return raw.
 
@@ -148,6 +198,13 @@ class DynamicToolCompressor:
         raw_lines = len(lines)
         raw_size = len(output.encode("utf-8"))
 
+        # Resolve typed sidecar flags from arguments and metadata
+        meta = dict(metadata or {})
+        is_confidential = confidential or bool(meta.get("confidential"))
+        item_scope = scope or meta.get("scope")
+        ec = exit_code if exit_code is not None else meta.get("exit_code")
+        is_partial = partial or bool(meta.get("partial")) or (ec == 143) or ("[TRUNCATED" in output)
+
         # Compute deterministic reference ID
         h = hashlib.sha256(f"{tool_name}:{output}".encode("utf-8")).hexdigest()[:12]
         ref_id = f"dtoc_{h}"
@@ -159,6 +216,12 @@ class DynamicToolCompressor:
         if len(summary_preview) > self.max_preview_chars:
             summary_preview = summary_preview[:self.max_preview_chars].rstrip() + "\n..."
 
+        if (ec == 143 or is_partial) and not summary_preview.startswith("[PARTIAL"):
+            if ec == 143:
+                summary_preview = f"[PARTIAL / KILLED: exit 143]\n{summary_preview}"
+            else:
+                summary_preview = f"[PARTIAL OUTPUT]\n{summary_preview}"
+
         artifact = CompressedToolOutput(
             ref_id=ref_id,
             tool_name=tool_name,
@@ -166,10 +229,39 @@ class DynamicToolCompressor:
             raw_payload=output,
             raw_byte_size=raw_size,
             raw_lines=raw_lines,
-            metadata=metadata or {},
+            confidential=is_confidential,
+            scope=item_scope,
+            exit_code=ec,
+            partial=is_partial,
+            metadata=meta,
         )
         self._store[ref_id] = artifact
         return artifact.format_placeholder(), artifact
+
+    def to_context_item(
+        self,
+        artifact: CompressedToolOutput,
+        role: str = "tool",
+        priority: int = 50,
+    ) -> Any:
+        """Convert a CompressedToolOutput into a ContextItem, preserving sidecar flags."""
+        from .models import ContextItem
+
+        return ContextItem(
+            id=f"item_{artifact.ref_id}",
+            role=role,
+            content=artifact.format_placeholder(),
+            priority=priority,
+            sensitivity="confidential" if artifact.confidential else "normal",
+            metadata={
+                "ref_id": artifact.ref_id,
+                "tool_name": artifact.tool_name,
+                "scope": artifact.scope,
+                "exit_code": artifact.exit_code,
+                "partial": artifact.partial,
+                **artifact.metadata,
+            },
+        )
 
     def restore(self, ref_id: str) -> Optional[str]:
         """Reversibly restore the raw tool output payload from external store."""

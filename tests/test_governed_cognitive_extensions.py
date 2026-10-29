@@ -9,15 +9,14 @@ import pytest
 from harpe import (
     ActionOutcome,
     AgentSelfHistoryTracker,
-    BehavioralGovernor,
     CognitiveDimension,
     ContextItem,
-    GovernorVerdict,
     OpenLoopStatus,
     OpenLoopTracker,
     SuppressionController,
     SuppressionScope,
 )
+from harpe.governor import BehavioralGovernor, GovernorVerdict
 
 
 def test_open_loop_lifecycle():

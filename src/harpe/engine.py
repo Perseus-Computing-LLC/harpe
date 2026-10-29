@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -52,6 +53,14 @@ class BudgetOverflowError(ValueError):
             f"pinned items use {report.consumed_tokens} tokens against a ceiling of {report.effective_budget}: "
             f"{report.overflow_tokens} over"
         )
+
+
+class ControlOverflowError(BudgetOverflowError):
+    """Raised when untouchable control budget (invariants + system policy) exceeds available capacity.
+
+    Fails closed to prevent truncation or silent drop of operational policies (H-R1).
+    """
+    pass
 
 
 class ContextBudgetEngine(ContextSynthesizer):
@@ -119,6 +128,79 @@ class ContextBudgetEngine(ContextSynthesizer):
 
         return max(0.01, utility)
 
+    @staticmethod
+    def _exact_knapsack(weights: List[int], utilities: List[float], capacity: int, min_block: int = 16) -> set:
+        """Exact 0/1 knapsack over ``weights``/``utilities`` (every weight in ``1..capacity``); returns the set of
+        chosen indices.
+
+        This computes exactly the textbook one-row DP, ``dp[c] = max(dp[c], dp[c - w] + u)`` for every item in
+        input order and every cell ``c``, with an item recorded as taken at ``c`` only when it strictly improves
+        the cell, so ties resolve as they always did (earlier items win). What changes is how many cells are
+        visited one at a time:
+
+        * Cells never consulted are skipped: for item ``i`` only ``c <= min(capacity, sum(w[:i+1]))`` can be
+          reached, and only ``c >= capacity - sum(w[i+1:])`` can lie on the final backtrace path. Above the
+          reachable prefix the row is flat, so those cells are filled by one slice assignment.
+        * ``dp`` is non-decreasing in ``c``, so for a block of cells ``[a, b]`` two comparisons decide whole
+          blocks: ``dp[b - w] + u <= dp[a]`` means no cell in the block improves, and ``dp[a - w] + u > dp[b]``
+          means every cell does, in which case the new values come from one list slice. Both tests use the
+          same float addition as the cell update, so they never disagree with it. Blocks that are neither are
+          halved until they are shorter than ``min_block`` and then scanned cell by cell.
+
+        Memory is one ``bytearray`` of ``capacity + 1`` keep flags per item, as before.
+        """
+        n = len(weights)
+        dp = [0.0] * (capacity + 1)
+        keep = [bytearray(capacity + 1) for _ in range(n)]
+        suffix = [0] * (n + 1)
+        for i in range(n - 1, -1, -1):
+            suffix[i] = suffix[i + 1] + weights[i]
+        prefix = 0
+        for i in range(n):
+            w, u, row = weights[i], utilities[i], keep[i]
+            prefix += w
+            hi = min(capacity, prefix)
+            lo = max(w, capacity - suffix[i + 1])
+            if lo <= hi:
+                # Top-down so that reads of dp[c - w] always see the row before this item (0/1, not unbounded).
+                stack = [(lo, hi)]
+                while stack:
+                    a, b = stack.pop()
+                    if dp[b - w] + u <= dp[a]:
+                        continue
+                    if dp[a - w] + u > dp[b]:
+                        dp[a:b + 1] = [z + u for z in dp[a - w:b - w + 1]]
+                        row[a:b + 1] = b"\x01" * (b - a + 1)
+                        continue
+                    if b - a < min_block:
+                        for c in range(b, a - 1, -1):
+                            cand = dp[c - w] + u
+                            if cand > dp[c]:
+                                dp[c] = cand
+                                row[c] = 1
+                        continue
+                    mid = (a + b) >> 1
+                    stack.append((a, mid))
+                    stack.append((mid + 1, b))
+            if hi < capacity:
+                # Every cell above the reachable prefix still holds the previous row's dp[prefix] (the block
+                # phase never writes above hi); item i improves all of those cells or none of them.
+                top_old = dp[capacity]
+                top_cand = top_old + u
+                span = capacity - hi
+                if top_cand > top_old:
+                    dp[hi + 1:] = [top_cand] * span
+                    row[hi + 1:] = b"\x01" * span
+                else:
+                    dp[hi + 1:] = [top_old] * span
+        take = set()
+        c = capacity
+        for i in range(n - 1, -1, -1):
+            if keep[i][c]:
+                take.add(i)
+                c -= weights[i]
+        return take
+
     @classmethod
     def _solve_knapsack_dp(
         cls,
@@ -129,9 +211,12 @@ class ContextBudgetEngine(ContextSynthesizer):
     ) -> Tuple[List[ContextItem], List[ContextItem]]:
         """Select items of maximum total utility whose token counts sum to at most ``capacity``.
 
-        Exact 0/1 knapsack DP on the raw token weights when ``n * (capacity + 1) <= max_cells`` (default
-        5,000,000): a 1-D value row plus one ``bytearray`` parent row per item, so memory is n*(capacity+1)
-        bytes. Above that size it falls back to utility-density greedy followed by a slack-fill pass in
+        Items heavier than the whole capacity are rejected up front: they could never be chosen and their DP
+        rows would change nothing. When the remaining weights share a common divisor the weights and the
+        capacity are divided by it, which is lossless (every reachable total is a multiple of it) and shrinks
+        the table. Then, when ``n * (capacity + 1) <= max_cells`` (default 5,000,000) on those reduced sizes,
+        :meth:`_exact_knapsack` runs the exact 0/1 DP on the raw token weights, using n*(capacity+1) bytes of
+        keep flags. Above that size it falls back to utility-density greedy followed by a slack-fill pass in
         utility order. Neither path quantises the budget, so with positive utilities the unused capacity is
         smaller than the largest single token count, not n times a bin size. Returns the chosen and the
         rejected items, each in input order.
@@ -141,24 +226,17 @@ class ContextBudgetEngine(ContextSynthesizer):
             return [], list(items)
         weights = [max(1, it.token_count) for it in items]
 
-        if n * (capacity + 1) <= max_cells:
-            dp = [0.0] * (capacity + 1)
-            # One byte per cell: a list of Python bools costs 8 bytes per slot plus the object.
-            keep = [bytearray(capacity + 1) for _ in range(n)]
-            for i in range(n):
-                w, u, row = weights[i], utilities[i], keep[i]
-                # Reverse scan so each item is used at most once (0/1, not unbounded).
-                for c in range(capacity, w - 1, -1):
-                    cand = dp[c - w] + u
-                    if cand > dp[c]:
-                        dp[c] = cand
-                        row[c] = 1
-            take = set()
-            c = capacity
-            for i in range(n - 1, -1, -1):
-                if keep[i][c]:
-                    take.add(i)
-                    c -= weights[i]
+        fit = [i for i in range(n) if weights[i] <= capacity]
+        if not fit:
+            return [], list(items)
+        divisor = math.gcd(*(weights[i] for i in fit))
+        reduced_capacity = capacity // divisor
+
+        if len(fit) * (reduced_capacity + 1) <= max_cells:
+            chosen = cls._exact_knapsack(
+                [weights[i] // divisor for i in fit], [utilities[i] for i in fit], reduced_capacity
+            )
+            take = {fit[k] for k in chosen}
         else:
             # Dantzig density order, then fill whatever slack is left in plain utility order: density alone
             # can skip a small high-utility item that would still have fit.
@@ -428,6 +506,13 @@ class ContextBudgetEngine(ContextSynthesizer):
         unpinned_items = [it for it in resolved_items if not self._is_never_pruned(it)]
         pinned_tokens = sum(it.token_count for it in pinned_items)
 
+        # Compute canonical pinned_policy_digest over pinned and invariant items (H-R1)
+        policy_hasher = hashlib.sha256()
+        for it in sorted(pinned_items, key=lambda x: (x.role, str(x.dimension or ""), str(x.id), str(x.content))):
+            policy_hasher.update(f"{it.role}:{it.dimension}:{it.id}:{it.content}\n".encode("utf-8"))
+        policy_digest = policy_hasher.hexdigest() if pinned_items else "empty_policy"
+
+        control_overflow = pinned_tokens > available_capacity
         if pinned_tokens >= available_capacity:
             # Nothing else fits. Pinned items are kept even over the ceiling, so say so in the report rather
             # than hiding it behind budget_remaining=0; strict callers get an exception instead.
@@ -463,12 +548,16 @@ class ContextBudgetEngine(ContextSynthesizer):
             dynamic_budget_expanded=dynamic_budget_expanded,
             over_budget=overflow > 0,
             overflow_tokens=overflow,
+            control_overflow=control_overflow,
+            pinned_policy_digest=policy_digest,
             effective_budget=available_capacity,
             reference_time=reference_time,
             dimension_counts=dim_counts,
             dimension_tokens=dim_tokens,
         )
         if strict and overflow > 0:
+            if control_overflow:
+                raise ControlOverflowError(report)
             raise BudgetOverflowError(report)
         for hook in self.hooks:
             hook.post_prune(report)
