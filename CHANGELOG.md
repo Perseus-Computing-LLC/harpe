@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `harpe.tiers` (Telarch roadmap 17.2, P14.1): the five ICM tiers read off fields a `ContextItem` already
+  has. `IcmTier.CONTROL` (0) is the control budget: pinned, priority-0 and invariant-dimension items, exactly
+  the items `ContextBudgetEngine._is_never_pruned` keeps. Tiers 1-4 are priority bands (`TIER_PRIORITY_BANDS`:
+  workspace map 1-19, task 20-39, index rows 40-69, bodies 70-100). `icm_tier(item)` reads an item's tier;
+  `tier_item(tier, content, **fields)` builds a plain `ContextItem` in a tier and refuses a contradiction (an
+  invariant item outside tier 0, a priority outside the band, an explicit `pinned`); `tier_breakdown(items)`
+  counts items and tokens per tier with plain int keys. No new field, eviction rule, knapsack or pruning
+  change: the `pinned_policy_digest` of a fixed pinned set is the value at main 3038032, and `strict=True`
+  still raises `ControlOverflowError` when the tier-0 items alone exceed the capacity
+  (`tests/test_icm_tiers_p14_1.py`).
+
 - `harpe::exact_knapsack` (`src/knapsack.rs`): the exact 0/1 knapsack kernel behind the Python engine's
   `KNAPSACK_DP` and `DUO_ATTENTION` policies, in the crate, with the Python kernel's strict-improvement tie
   rule and float order (#11).

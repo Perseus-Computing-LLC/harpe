@@ -3,6 +3,7 @@
 from .models import CognitiveDimension, ContextItem, MixedRoleRenderError, PrunePolicy, SynthesisReport, TokenBudget
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .engine import BudgetOverflowError, ContextBudgetEngine, ControlOverflowError, HeuristicTokenCounter
+from .tiers import TIER_PRIORITY_BANDS, IcmTier, icm_tier, tier_breakdown, tier_item
 from .tokenizers import TiktokenCounter, tiktoken_available
 from .dtoc import CompressedToolOutput, DynamicToolCompressor, LRUArtifactStore
 from .prompts import format_official_cot_prompt, format_qa_prompt
@@ -93,6 +94,11 @@ __all__ = [
     "BudgetOverflowError",
     "ControlOverflowError",
     "ContextBudgetEngine",
+    "IcmTier",
+    "TIER_PRIORITY_BANDS",
+    "icm_tier",
+    "tier_item",
+    "tier_breakdown",
     "HeuristicTokenCounter",
     "TiktokenCounter",
     "tiktoken_available",
