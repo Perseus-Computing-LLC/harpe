@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still raises `ControlOverflowError` when the tier-0 items alone exceed the capacity
   (`tests/test_icm_tiers_p14_1.py`).
 
+- `harpe.two_pass` (Telarch roadmap 17.2, P14.3): Pass 2 of the two-pass context build and its
+  `harpe.context_built` receipt. `TwoPassBuild(report, bodies=... | descriptions=..., budget_tokens=...)` takes
+  a Pass-1 `SynthesisReport` whose unpinned included items are the rows, each placed as its description;
+  `request(id)` expands a row's body, in request order, while the budget left after tier 0 and the rows
+  allows, and refuses a request that does not fit (the row stays a description, `expansions_refused` counts
+  it). Pass 2 never removes an item or touches tier 0, so an expansion that would need a pinned item's tokens
+  is refused and the pinned set's `pinned_policy_digest` is Pass 1's. `emit(ledger_path=...)` writes the
+  build's one receipt: `pinned_policy_digest`, `rows_pass1`, `rows_expanded`, `expansions_refused`,
+  `budget_tokens`, `used_tokens` and `dropped_ids_sha256` (sha256 of the sorted pruned and withheld ids
+  joined by `"\n"`), ints and strings only. `ledger_path` has no default. The writer is `argus-ledger`,
+  imported only when a receipt is written: `pip install harpe[audit]`. `pinned_policy_digest(items)` is now
+  a module function the engine and Pass 2 share; its value is unchanged (`tests/test_two_pass_p14_3.py`).
+
 - `harpe::exact_knapsack` (`src/knapsack.rs`): the exact 0/1 knapsack kernel behind the Python engine's
   `KNAPSACK_DP` and `DUO_ATTENTION` policies, in the crate, with the Python kernel's strict-improvement tie
   rule and float order (#11).

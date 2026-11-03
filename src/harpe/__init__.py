@@ -4,6 +4,14 @@ from .models import CognitiveDimension, ContextItem, MixedRoleRenderError, Prune
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .engine import BudgetOverflowError, ContextBudgetEngine, ControlOverflowError, HeuristicTokenCounter
 from .tiers import TIER_PRIORITY_BANDS, IcmTier, icm_tier, tier_breakdown, tier_item
+from .two_pass import (
+    CONTEXT_BUILT_EVENT,
+    CONTEXT_BUILT_FIELDS,
+    TwoPassBuild,
+    append_context_built,
+    dropped_ids_sha256,
+    pinned_policy_digest,
+)
 from .tokenizers import TiktokenCounter, tiktoken_available
 from .dtoc import CompressedToolOutput, DynamicToolCompressor, LRUArtifactStore
 from .prompts import format_official_cot_prompt, format_qa_prompt
@@ -172,4 +180,10 @@ __all__ = [
     "ProfileStatement",
     "ResolvedStatement",
     "question_detail",
+    "CONTEXT_BUILT_EVENT",
+    "CONTEXT_BUILT_FIELDS",
+    "TwoPassBuild",
+    "append_context_built",
+    "dropped_ids_sha256",
+    "pinned_policy_digest",
 ]
