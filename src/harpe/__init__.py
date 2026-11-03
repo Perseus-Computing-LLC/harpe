@@ -87,7 +87,7 @@ from .profile import (
     question_detail,
 )
 
-__version__ = "0.1.0a11"
+__version__ = "0.1.0a12"
 
 __all__ = [
     "MixedRoleRenderError",

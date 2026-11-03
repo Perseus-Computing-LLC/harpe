@@ -4,11 +4,11 @@ version = 4
 
 [[package]]
 name = "harpe"
-version = "0.1.0-alpha.11"
+version = "0.1.0-alpha.12"
 
 [[package]]
 name = "harpe-native"
-version = "0.1.0-alpha.11"
+version = "0.1.0-alpha.12"
 dependencies = [
  "harpe",
  "pyo3",

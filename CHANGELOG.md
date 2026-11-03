@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.12] - 2026-11-03
+
 ### Added
 
 - `harpe.tiers` (Telarch roadmap 17.2, P14.1): the five ICM tiers read off fields a `ContextItem` already

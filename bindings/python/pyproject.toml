@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "harpe-native"
-version = "0.1.0a11"
+version = "0.1.0a12"
 description = "Python extension exposing the harpe Rust kernels (exact 0/1 knapsack)."
 readme = "README.md"
 license = { text = "MIT" }
