@@ -295,7 +295,7 @@ def test_bar_b_property_pass_two_never_touches_the_pinned_set():
                   for i in range(rng.randint(0, 3))]
         n_rows = rng.randint(1, 8)
         descs = [_desc(f"r{i}", rng.randint(1, 30), priority=rng.randint(1, 100)) for i in range(n_rows)]
-        total = sum(it.token_count for it in pinned) + rng.randint(0, 250)
+        total = sum(it.token_count for it in pinned) + rng.randint(1, 250)  # TokenBudget refuses 0
         report = engine.synthesize(pinned + descs, _budget(total), policy=PrunePolicy.LOWEST_PRIORITY)
         kept = [it.id for it in report.included_items if not it.pinned]
         bodies = {i: _row(i, rng.randint(1, 200)) for i in kept}

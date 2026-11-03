@@ -68,7 +68,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pydantic pytest hatchling build
+          # argus-ledger: the harpe.context_built receipt tests (P14.3) write to a tmp ledger through it.
+          pip install pydantic pytest hatchling build "argus-ledger==0.1.0a8"
 
       # Installs the built wheel the way a user would: dependencies resolved from PyPI, no --no-deps.
       - name: Install the wheel with its dependencies in a clean venv

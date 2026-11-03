@@ -64,6 +64,18 @@ class ControlOverflowError(BudgetOverflowError):
     pass
 
 
+def pinned_policy_digest(pinned_items: Sequence[ContextItem]) -> str:
+    """The canonical digest of a pinned set (H-R1), as ``SynthesisReport.pinned_policy_digest`` reports it:
+    sha256 over each pinned item's role, dimension, id and content in a fixed order, so the order the items come
+    in does not matter; ``"empty_policy"`` when nothing is pinned."""
+    if not pinned_items:
+        return "empty_policy"
+    policy_hasher = hashlib.sha256()
+    for it in sorted(pinned_items, key=lambda x: (x.role, str(x.dimension or ""), str(x.id), str(x.content))):
+        policy_hasher.update(f"{it.role}:{it.dimension}:{it.id}:{it.content}\n".encode("utf-8"))
+    return policy_hasher.hexdigest()
+
+
 class ContextBudgetEngine(ContextSynthesizer):
     """Deterministic context synthesis engine enforcing explicit token budgets."""
 
@@ -523,10 +535,7 @@ class ContextBudgetEngine(ContextSynthesizer):
         pinned_tokens = sum(it.token_count for it in pinned_items)
 
         # Compute canonical pinned_policy_digest over pinned and invariant items (H-R1)
-        policy_hasher = hashlib.sha256()
-        for it in sorted(pinned_items, key=lambda x: (x.role, str(x.dimension or ""), str(x.id), str(x.content))):
-            policy_hasher.update(f"{it.role}:{it.dimension}:{it.id}:{it.content}\n".encode("utf-8"))
-        policy_digest = policy_hasher.hexdigest() if pinned_items else "empty_policy"
+        policy_digest = pinned_policy_digest(pinned_items)
 
         control_overflow = pinned_tokens > available_capacity
         self._knapsack_trace = {}

@@ -27,6 +27,8 @@ dependencies = ["pydantic>=2"]
 [project.optional-dependencies]
 # Exact counts through harpe.tokenizers.TiktokenCounter; the default counter stays a dependency-free heuristic.
 tiktoken = ["tiktoken>=0.7"]
+# harpe.two_pass writes its harpe.context_built receipt through argus-ledger, imported only when one is written.
+audit = ["argus-ledger>=0.1.0a8"]
 
 [project.urls]
 Homepage = "https://telarch.ai/harpe"
