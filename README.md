@@ -125,6 +125,7 @@ Report a vulnerability to contact@perseuscomputing.com with `[SECURITY]` in the 
 ## Links
 
 - [telarch.ai/harpe](https://telarch.ai/harpe): overview and a live demo
+- [telarch.ai/chatgpt](https://telarch.ai/chatgpt): Telarch as an app for ChatGPT and a plugin for Codex
 - [Documentation (docs.rs)](https://docs.rs/harpe)
 - [Changelog](CHANGELOG.md)
 
