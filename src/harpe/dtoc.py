@@ -127,6 +127,7 @@ class DynamicToolCompressor:
         self,
         min_compress_chars: int = 800,
         preview_lines: int = 4,
+        tail_lines: int = 4,
         max_preview_chars: int = 600,
         store_max_bytes: int = DEFAULT_STORE_MAX_BYTES,
     ) -> None:
@@ -134,10 +135,13 @@ class DynamicToolCompressor:
             raise ValueError("min_compress_chars must be >= 1")
         if preview_lines < 1:
             raise ValueError("preview_lines must be >= 1")
+        if tail_lines < 1:
+            raise ValueError("tail_lines must be >= 1")
         if max_preview_chars < 1:
             raise ValueError("max_preview_chars must be >= 1")
         self.min_compress_chars = min_compress_chars
         self.preview_lines = preview_lines
+        self.tail_lines = tail_lines
         self.max_preview_chars = max_preview_chars
         self._store: Dict[str, CompressedToolOutput] = LRUArtifactStore(store_max_bytes)
 
@@ -210,8 +214,9 @@ class DynamicToolCompressor:
         ref_id = f"dtoc_{h}"
 
         # Generate preview summary
+        effective_tail = max(self.tail_lines, 5) if (ec not in (None, 0) or is_partial) else self.tail_lines
         head = "\n".join(lines[:self.preview_lines])
-        tail = "\n".join(lines[-2:]) if raw_lines > self.preview_lines + 2 else ""
+        tail = "\n".join(lines[-effective_tail:]) if raw_lines > self.preview_lines + effective_tail else ""
         summary_preview = f"{head}\n...\n{tail}" if tail else head
         if len(summary_preview) > self.max_preview_chars:
             summary_preview = summary_preview[:self.max_preview_chars].rstrip() + "\n..."

@@ -59,7 +59,27 @@ class TestDynamicToolCompressor(unittest.TestCase):
         with self.assertRaises(ValueError):
             DynamicToolCompressor(preview_lines=0)
         with self.assertRaises(ValueError):
+            DynamicToolCompressor(tail_lines=0)
+        with self.assertRaises(ValueError):
             DynamicToolCompressor(max_preview_chars=0)
+
+    def test_adaptive_tail_preservation_for_error_outputs(self):
+        lines = [f"info line {i}" for i in range(30)]
+        lines.append("Traceback (most recent call last):")
+        lines.append('  File "app.py", line 42, in run')
+        lines.append("    res = compute()")
+        lines.append("ZeroDivisionError: division by zero")
+        full_text = "\n".join(lines)
+
+        compressor = DynamicToolCompressor(min_compress_chars=200, preview_lines=2, tail_lines=4)
+        placeholder, artifact = compressor.maybe_compress("terminal", full_text, exit_code=1)
+        self.assertIsNotNone(artifact)
+        assert artifact is not None
+
+        # Verify that ZeroDivisionError and traceback are preserved in summary preview
+        self.assertIn("ZeroDivisionError: division by zero", artifact.summary)
+        self.assertIn("Traceback", artifact.summary)
+
 
 
 if __name__ == "__main__":
