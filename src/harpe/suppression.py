@@ -125,17 +125,22 @@ class SuppressionController:
         return [r for r in self._rules.values() if not r.is_expired(now)]
 
     def evaluate_item(self, item: ContextItem) -> Tuple[bool, float, Optional[str]]:
-        """Evaluate an item against active rules.
+        """Evaluate an item against every active rule that matches it, so the order rules were added in does not
+        change the outcome: a matching hard mute always mutes (factor 0.0); otherwise the strongest soft rule (the
+        smallest ``discount_factor``) applies. Among equally strong rules the reason is the one added first.
 
         Returns:
             (is_suppressed, effective_discount_factor, suppression_reason)
         """
-        active_rules = self.list_active_rules()
-        for rule in active_rules:
+        best: Optional[Tuple[float, str]] = None
+        for rule in self.list_active_rules():
             if rule.matches(item):
                 factor = 0.0 if rule.hard_mute else rule.discount_factor
-                return True, factor, rule.reason
-        return False, 1.0, None
+                if best is None or factor < best[0]:
+                    best = (factor, rule.reason)
+        if best is None:
+            return False, 1.0, None
+        return True, best[0], best[1]
 
     def filter_and_damp(
         self,

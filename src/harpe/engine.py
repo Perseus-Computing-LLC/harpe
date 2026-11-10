@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from . import _native
 from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
@@ -64,15 +65,48 @@ class ControlOverflowError(BudgetOverflowError):
     pass
 
 
+def _digest_value(value: Any) -> Any:
+    """An enum enters a digest as its value, so an item built in code and the same item loaded from JSON agree."""
+    return value.value if isinstance(value, Enum) else value
+
+
+def _digest_field(value: Any) -> str:
+    """One field of a digest record: backslash, colon and newline written as ``\\\\``, ``\\:`` and ``\\n``, so no
+    field can forge a separator or a record end. A field without those characters is unchanged."""
+    return str(_digest_value(value)).replace("\\", "\\\\").replace(":", "\\:").replace("\n", "\\n")
+
+
+def _digest_dimension(dimension: Any) -> str:
+    # An absent dimension is written None, as it always was; a dimension that is the string "None" is written \None,
+    # which no escaped field can produce.
+    if dimension is None:
+        return "None"
+    text = _digest_field(dimension)
+    return "\\None" if text == "None" else text
+
+
 def pinned_policy_digest(pinned_items: Sequence[ContextItem]) -> str:
     """The canonical digest of a pinned set (H-R1), as ``SynthesisReport.pinned_policy_digest`` reports it:
-    sha256 over each pinned item's role, dimension, id and content in a fixed order, so the order the items come
-    in does not matter; ``"empty_policy"`` when nothing is pinned."""
+    sha256 over one record per pinned item, ``role:dimension:id:content`` and a newline, in a fixed order, so the
+    order the items come in does not matter; ``"empty_policy"`` when nothing is pinned.
+
+    The encoding is injective: in each field a backslash, a colon and a newline are escaped (``\\\\``, ``\\:``,
+    ``\\n``), an enum dimension as its value (``CognitiveDimension.INVARIANT`` and ``"invariant"`` agree, so the
+    digest can be recomputed from serialized items), an absent dimension as ``None`` and a dimension that is the
+    string ``"None"`` as ``\\None``. A pinned set whose fields hold no backslash, colon or newline and whose
+    dimensions are absent or plain strings other than ``"None"`` has the digest it had before these rules."""
     if not pinned_items:
         return "empty_policy"
+    entries = []
+    for it in pinned_items:
+        role, dimension = _digest_value(it.role), _digest_value(it.dimension)
+        fields = (_digest_field(role), _digest_dimension(dimension), _digest_field(it.id), _digest_field(it.content))
+        record = ":".join(fields) + "\n"
+        key = (str(role), "" if dimension is None else str(dimension), str(it.id), str(it.content))
+        entries.append((key, record))  # ties on the key are broken by the record itself
     policy_hasher = hashlib.sha256()
-    for it in sorted(pinned_items, key=lambda x: (x.role, str(x.dimension or ""), str(x.id), str(x.content))):
-        policy_hasher.update(f"{it.role}:{it.dimension}:{it.id}:{it.content}\n".encode("utf-8"))
+    for _, record in sorted(entries):
+        policy_hasher.update(record.encode("utf-8"))
     return policy_hasher.hexdigest()
 
 
@@ -294,6 +328,12 @@ class ContextBudgetEngine(ContextSynthesizer):
         return counts, toks
 
     @staticmethod
+    def _withheld_from_remote(item: ContextItem) -> bool:
+        """A remote destination is sent only items marked ``"normal"``: ``"confidential"``, and any other value
+        assigned without validation (by a hook or in place), is withheld. Fails closed."""
+        return item.sensitivity != "normal"
+
+    @staticmethod
     def _is_never_pruned(item: ContextItem) -> bool:
         """Pinned, priority-0 and invariant-dimension items bypass selection and are always included."""
         dim_val = item.dimension.value if isinstance(item.dimension, CognitiveDimension) else item.dimension
@@ -487,7 +527,10 @@ class ContextBudgetEngine(ContextSynthesizer):
         now: Optional[float] = None,
     ) -> SynthesisReport:
         """``destination``: "remote" (default) withholds every item marked confidential, pinned or not, before any
-        budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything.
+        budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything. The check is
+        made again after the ``pre_prune`` hooks, on the items they leave: an item a hook marks confidential is
+        withheld as well (listed after the items marked up front), and an item a hook left without a token count
+        is counted again, so selection only sees what was checked.
         ``prune_policy``: alias for ``policy`` for ergonomics across benchmarks. An unknown policy raises
         ``ValueError``.
         ``query``: optional prompt/question string for automatic intent detection.
@@ -519,11 +562,22 @@ class ContextBudgetEngine(ContextSynthesizer):
         items_list = self._normalise_items(items, persona_item, evaluated_intent)
         withheld: List[ContextItem] = []
         if destination == "remote":
-            withheld = [it for it in items_list if it.sensitivity == "confidential"]
-            items_list = [it for it in items_list if it.sensitivity != "confidential"]
+            withheld = [it for it in items_list if self._withheld_from_remote(it)]
+            items_list = [it for it in items_list if not self._withheld_from_remote(it)]
         resolved_items = self._count_uncounted(items_list)
-        for hook in self.hooks:
-            hook.pre_prune(resolved_items)
+        if self.hooks:
+            for hook in self.hooks:
+                hook.pre_prune(resolved_items)
+            # Hooks work on copies and may reclassify or rewrite them: what is withheld and what each item costs is
+            # decided again on the items they left, so the items selected are the items checked.
+            if destination == "remote":
+                withheld.extend(it for it in resolved_items if self._withheld_from_remote(it))
+                resolved_items = [it for it in resolved_items if not self._withheld_from_remote(it)]
+            resolved_items = [
+                it if it.token_count > 0
+                else it.model_copy(update={"token_count": self.token_counter.count_tokens(it.content)})
+                for it in resolved_items
+            ]
 
         # Recency is measured from the newest item, not from the wall clock, so a replay scores identically.
         reference_time = now

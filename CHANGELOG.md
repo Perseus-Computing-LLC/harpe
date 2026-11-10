@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fencing and compiled graphs: `CompiledGraph.invoke` enforces `lease_fencing_token`. A run is admitted only with a
+  token at least the newest the graph has run under; a holder superseded before a node, or while a node runs,
+  stops with the new `StaleFencingTokenError` and runs no further node, and once a token has been used a run
+  without one is refused. A non-int token raises `TypeError`. `compile()` snapshots the nodes, edges and branch
+  maps (including the caller's `path_map`), so later builder edits no longer rewire a compiled graph.
+- Confidential withholding: for `destination="remote"`, `synthesize` checks sensitivity again after the
+  `pre_prune` hooks, so an item a hook marks confidential is withheld, and any sensitivity other than `"normal"`
+  is withheld (fail closed); items a hook leaves uncounted are counted before selection. `TwoPassBuild` takes
+  `destination` (default `"remote"`, like `synthesize`) and, for remote, refuses a report that includes a
+  confidential item or a confidential body or description, so Pass 2 cannot send what Pass 1 withheld.
+- Two-pass receipts: `emit()` seals the build, so `request()` after the receipt raises `RuntimeError` instead of
+  changing the context the receipt describes. The build keeps its own copies of the items it is given and hands
+  out copies from `items()`.
+- Digests and handles: `pinned_policy_digest` escapes `\`, `:` and newlines in each field and hashes an enum
+  dimension as its value, so different pinned sets cannot share a digest and a digest recomputed from serialized
+  items matches. `dropped_ids_sha256` escapes `\` and newlines in ids, and DTOC reference ids escape `\` and `:`
+  in the tool name, so two different artifacts cannot share a ref and overwrite each other's stored output.
+  Values are unchanged for input without those characters and with absent or plain-string dimensions; a pinned
+  set with an enum dimension now has the digest of its serialized form, and a dimension that is the string
+  `"None"` is no longer hashed like an absent one.
+- Typed fields over free metadata: `DynamicToolCompressor.to_context_item` writes `ref_id`, `tool_name`, `scope`,
+  `exit_code`, `partial` (and `confidential`, when present) over the caller's metadata, matching the placeholder,
+  and marks the item confidential whenever its placeholder does. `OpenLoopTracker.to_context_items` writes each
+  loop's own `loop_id` and `status` over its metadata. `ContextItem` and `TokenBudget` validation no longer writes
+  generated ids or resolved aliases into the caller's dict.
+- Order and case: a matching `SuppressionController` hard mute now always mutes whatever order rules were added
+  in, and otherwise the strongest soft rule applies. `BehavioralGovernor` treats a history directive's
+  `epistemic_state` as revoked in any letter case, as it already did for invariants. `ProfileLedger.add` without
+  `order` places turns by arrival, so the first statement stays the established record and the latest is current.
+
 ## [0.1.0-alpha.12] - 2026-11-03
 
 ### Added

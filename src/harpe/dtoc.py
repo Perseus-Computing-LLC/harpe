@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from pydantic import BaseModel, Field
 
 DEFAULT_STORE_MAX_BYTES = 64 * 1024 * 1024
@@ -34,6 +34,18 @@ class CompressedToolOutput(BaseModel):
     partial: bool = Field(default=False, description="Whether output is truncated or partial (e.g. killed process exit 143).")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Execution metadata.")
 
+    def _sidecar(self) -> Tuple[bool, Optional[str], Optional[int], bool]:
+        """The typed sidecar ``(confidential, scope, exit_code, partial)`` as the placeholder and the context item
+        both report it: a typed field wins over the same key in the free ``metadata``, which only fills a field that
+        is unset; confidential and partial are set when either says so."""
+        ec = self.exit_code if self.exit_code is not None else self.metadata.get("exit_code")
+        return (
+            self.confidential or bool(self.metadata.get("confidential")),
+            self.scope or self.metadata.get("scope"),
+            ec,
+            self.partial or bool(self.metadata.get("partial")) or ec == 143,
+        )
+
     def format_placeholder(self) -> str:
         """Render the compact, structured placeholder inserted into active context."""
         tokens = [
@@ -42,15 +54,14 @@ class CompressedToolOutput(BaseModel):
             f"lines={self.raw_lines}",
             f"bytes={self.raw_byte_size}",
         ]
-        if self.confidential or bool(self.metadata.get("confidential")):
+        confidential, scope_val, ec, partial = self._sidecar()
+        if confidential:
             tokens.append("confidential=true")
-        scope_val = self.scope or self.metadata.get("scope")
         if scope_val:
             tokens.append(f"scope={scope_val}")
-        ec = self.exit_code if self.exit_code is not None else self.metadata.get("exit_code")
         if ec is not None:
             tokens.append(f"exit_code={ec}")
-        if self.partial or bool(self.metadata.get("partial")) or ec == 143:
+        if partial:
             tokens.append("partial=true")
 
         header = " ".join(tokens)
@@ -209,8 +220,11 @@ class DynamicToolCompressor:
         ec = exit_code if exit_code is not None else meta.get("exit_code")
         is_partial = partial or bool(meta.get("partial")) or (ec == 143) or ("[TRUNCATED" in output)
 
-        # Compute deterministic reference ID
-        h = hashlib.sha256(f"{tool_name}:{output}".encode("utf-8")).hexdigest()[:12]
+        # Compute deterministic reference ID. In the tool name a backslash and a colon are escaped, so the colon
+        # after it always ends it: tool "a:b" with output "c" and tool "a" with output "b:c" get different refs
+        # (and so cannot overwrite each other's stored output). A name without either character hashes as before.
+        safe_tool = str(tool_name).replace("\\", "\\\\").replace(":", "\\:")
+        h = hashlib.sha256(f"{safe_tool}:{output}".encode("utf-8")).hexdigest()[:12]
         ref_id = f"dtoc_{h}"
 
         # Generate preview summary
@@ -249,23 +263,32 @@ class DynamicToolCompressor:
         role: str = "tool",
         priority: int = 50,
     ) -> Any:
-        """Convert a CompressedToolOutput into a ContextItem, preserving sidecar flags."""
+        """Convert a CompressedToolOutput into a ContextItem, preserving sidecar flags.
+
+        The item's metadata is the artifact's free metadata with the typed sidecar written over it: ``ref_id``,
+        ``tool_name``, ``scope``, ``exit_code`` and ``partial`` (and ``confidential`` when the free metadata has that
+        key) are always this artifact's own, as its placeholder reports them, so metadata carried over from an
+        earlier item cannot point this one at the earlier artifact or replace its scope or exit code."""
         from .models import ContextItem
 
+        confidential, scope, exit_code, partial = artifact._sidecar()
+        metadata = dict(artifact.metadata)
+        if "confidential" in metadata:
+            metadata["confidential"] = confidential
+        metadata.update(
+            ref_id=artifact.ref_id,
+            tool_name=artifact.tool_name,
+            scope=scope,
+            exit_code=exit_code,
+            partial=partial,
+        )
         return ContextItem(
             id=f"item_{artifact.ref_id}",
             role=role,
             content=artifact.format_placeholder(),
             priority=priority,
-            sensitivity="confidential" if artifact.confidential else "normal",
-            metadata={
-                "ref_id": artifact.ref_id,
-                "tool_name": artifact.tool_name,
-                "scope": artifact.scope,
-                "exit_code": artifact.exit_code,
-                "partial": artifact.partial,
-                **artifact.metadata,
-            },
+            sensitivity="confidential" if confidential else "normal",
+            metadata=metadata,
         )
 
     def restore(self, ref_id: str) -> Optional[str]:

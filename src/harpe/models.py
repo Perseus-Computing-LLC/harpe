@@ -44,6 +44,7 @@ class TokenBudget(BaseModel):
     @classmethod
     def _resolve_budget_aliases(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            data = dict(data)  # resolve on a copy: the caller's mapping is left as it was given
             # Support system_reserve -> safety_margin alias
             if "system_reserve" in data and ("safety_margin" not in data or data["safety_margin"] == 0):
                 data["safety_margin"] = data["system_reserve"]
@@ -110,6 +111,9 @@ class ContextItem(BaseModel):
     @classmethod
     def _resolve_item_id_alias(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Resolve on a copy: an id generated here belongs to this item only, never to the caller's dict, so a
+            # later copy of that dict is a new item rather than a replay of this one's id.
+            data = dict(data)
             item_id = data.get("item_id")
             cur_id = data.get("id")
             if not cur_id and item_id:
