@@ -367,14 +367,15 @@ class ContextBudgetEngine(ContextSynthesizer):
             dupes = sorted({i for i in ids if ids.count(i) > 1})
             raise ValueError(f"duplicate ContextItem ids{where}: {dupes}")
 
-    def _count_uncounted(self, items_list: List[ContextItem]) -> List[ContextItem]:
-        """Only items without a count are counted and copied. Hooks may change items in place, so with hooks
-        every item is copied, and the copy owns its ``metadata``: ``model_copy`` alone is shallow, the copy's
-        ``metadata`` would be the caller's own dict, and a hook's write into it (a per-query score, say) would
-        reach the caller's item and every later call over it. The copy is :func:`harpe.models._detached_copy`,
-        not ``model_copy(deep=True)``: it rebuilds the dicts, lists, tuples and sets inside ``metadata`` and
-        shares every other object there, so a lock, a client or an open handle in ``metadata`` is accepted with
-        hooks as it is without them."""
+    def _count_uncounted(self, items_list: Sequence[ContextItem]) -> List[ContextItem]:
+        """The items as the ``pre_prune`` hooks, or without hooks the selection, will see them. Only items without
+        a count are counted and copied. Hooks may change items in place, so with hooks every item is copied, and
+        the copy owns its ``metadata``: ``model_copy`` alone is shallow, the copy's ``metadata`` would be the
+        caller's own dict, and a hook's write into it (a per-query score, say) would reach the caller's item and
+        every later call over it. The copy is :func:`harpe.models._detached_copy`, not
+        ``model_copy(deep=True)``: it rebuilds the dicts, lists, tuples and sets inside ``metadata`` and shares
+        every other object there, so a lock, a client or an open handle in ``metadata`` is accepted with hooks as
+        it is without them."""
         count_tokens = self.token_counter.count_tokens
         if self.hooks:
             return [
@@ -385,6 +386,35 @@ class ContextBudgetEngine(ContextSynthesizer):
             it.model_copy(update={"token_count": count_tokens(it.content)}) if it.token_count <= 0 else it
             for it in items_list
         ]
+
+    def _settle_after_hooks(
+        self, items_list: Sequence[ContextItem], handed: Dict[int, Tuple[ContextItem, str, str, int]]
+    ) -> List[ContextItem]:
+        """The engine's own copies of the items the ``pre_prune`` hooks left, each costed as it now reads.
+
+        ``handed`` maps ``id(item)`` to ``(item, id, content, token_count)`` for every item the hooks were handed,
+        as it was then. An item is counted again when it has no count (``token_count <= 0``), and when its content
+        is no longer the content its count was taken for while the count is still that count: a hook that rewrote
+        the text (resolved a reference, summarized, redacted) and left ``token_count`` alone. The item is compared
+        with itself as handed, or, for an object the hook put in its place, with the handed item of the same id.
+        A hook that sets another count along with its rewrite keeps it, and so does an item added under a new id,
+        like a count the caller gives. Without this the selection and ``consumed_tokens`` would be made of counts
+        of text the items no longer hold."""
+        count_tokens = self.token_counter.count_tokens
+        by_item_id: Optional[Dict[str, Tuple[ContextItem, str, str, int]]] = None
+        settled: List[ContextItem] = []
+        for it in items_list:
+            was = handed.get(id(it))
+            if was is None:
+                if by_item_id is None:
+                    by_item_id = {entry[1]: entry for entry in handed.values()}
+                was = by_item_id.get(it.id)
+            tokens = it.token_count
+            if tokens <= 0 or (was is not None and tokens == was[3] and it.content != was[2]):
+                settled.append(_detached_copy(it, {"token_count": count_tokens(it.content)}))
+            else:
+                settled.append(_detached_copy(it))
+        return settled
 
     @staticmethod
     def _take_in_order(ordered: Sequence[ContextItem], capacity: int) -> Tuple[List[ContextItem], List[ContextItem]]:
@@ -581,16 +611,17 @@ class ContextBudgetEngine(ContextSynthesizer):
         if self.hooks:
             # A post_prune hook is handed the report, withheld items included, so those are copies as well.
             withheld = [_detached_copy(it) for it in withheld]
+            handed = {id(it): (it, it.id, it.content, it.token_count) for it in resolved_items}
             for hook in self.hooks:
                 hook.pre_prune(resolved_items)
-            # Hooks work on copies and may reclassify, rewrite or add to them: what is withheld, that each id is
-            # unique and what each item costs are decided again on the items they left, so the items selected are
-            # the items checked.
+            # Hooks work on copies and may reclassify, rewrite or add to them. The engine takes its own copies of
+            # what they left, and on those decides again what each item costs, what is withheld and that each id
+            # is unique, so the items selected are the items checked.
+            resolved_items = self._settle_after_hooks(resolved_items, handed)
             if destination == "remote":
                 withheld.extend(it for it in resolved_items if self._withheld_from_remote(it))
                 resolved_items = [it for it in resolved_items if not self._withheld_from_remote(it)]
             self._refuse_duplicate_ids(withheld + resolved_items, " after the pre_prune hooks")
-            resolved_items = self._count_uncounted(resolved_items)
 
         # Recency is measured from the newest item, not from the wall clock, so a replay scores identically.
         reference_time = now

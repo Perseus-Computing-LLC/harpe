@@ -3,6 +3,8 @@
 * The copies ``synthesize`` gives its hooks and the copies ``TwoPassBuild`` keeps and hands out own the dicts, lists,
   tuples and sets inside ``metadata`` and share every other object there: a lock, a client or an open handle no
   longer raises, and nothing written into a copy's ``metadata``, at any depth, reaches the item it was made from.
+* An item whose content a ``pre_prune`` hook rewrote is costed as rewritten, so the budget holds for what the report
+  includes and ``consumed_tokens`` is the count of that text; a count a hook or the caller set on purpose is kept.
 """
 from __future__ import annotations
 
@@ -294,3 +296,154 @@ def test_a_build_and_the_items_it_hands_out_share_no_container_with_the_report_o
     assert [it.metadata.get("tags") for it in second] == [["policy"], ["body"], None]
     assert second[2].metadata == {"nested": {"k": ["v"]}} and second[1].content == "the full body " * 10
     assert build.used_tokens == 6 + 40 + 30
+
+
+# ---- what an item costs after a hook rewrote it ---------------------------------------------------------------------
+
+class _Rewrite(_Noop):
+    """Applies ``edit(item)`` to every item in place; ``edit`` may return a replacement object."""
+
+    def __init__(self, edit: Any) -> None:
+        self.edit = edit
+
+    def pre_prune(self, items: Sequence[ContextItem]) -> None:
+        for index, it in enumerate(items):
+            replacement = self.edit(it)
+            if replacement is not None:
+                items[index] = replacement  # type: ignore[index]
+
+
+def _short_items(count: int = 5) -> List[ContextItem]:
+    return [ContextItem(id=f"i{n}", content=f"see document {n}", priority=50, created_at=1000.0 + n) for n in range(count)]
+
+
+def _actual(engine: ContextBudgetEngine, items: Sequence[ContextItem]) -> int:
+    return sum(engine.token_counter.count_tokens(it.content) for it in items)
+
+
+def _expand(it: ContextItem) -> None:
+    it.content = it.content + " resolved detail" * 150
+
+
+def _expand_by_replacing(it: ContextItem) -> ContextItem:
+    return it.model_copy(update={"content": it.content + " resolved detail" * 150})
+
+
+def _expand_and_rename(it: ContextItem) -> None:
+    it.id = "resolved-" + it.id
+    it.content = it.content + " resolved detail" * 150
+
+
+@pytest.mark.parametrize("policy", list(PrunePolicy))
+@pytest.mark.parametrize("edit", [_expand, _expand_by_replacing, _expand_and_rename])
+@pytest.mark.parametrize("counted", [False, True])
+def test_items_a_hook_expanded_are_selected_and_reported_at_their_new_cost(policy, edit, counted):
+    engine = ContextBudgetEngine(hooks=[_Rewrite(edit)])
+    items = _short_items()
+    if counted:
+        items = [it.model_copy(update={"token_count": engine.token_counter.count_tokens(it.content)}) for it in items]
+    budget = TokenBudget(total_budget=1000)
+    report = engine.synthesize(items, budget, policy=policy, destination="local")
+    assert len(report.included_items) + len(report.pruned_items) == 5
+    assert report.consumed_tokens == _actual(engine, report.included_items) <= budget.available_context
+    assert report.pruned_tokens == _actual(engine, report.pruned_items)
+    each = engine.token_counter.count_tokens(report.pruned_items[0].content)
+    assert budget.available_context // each == 1  # the fixture: one rewritten item fits, not five
+    assert len(report.included_items) == 1 and not report.over_budget
+    assert all(it.token_count < 10 for it in items) and all(len(it.content) < 20 for it in items)
+
+
+def test_items_a_hook_shortened_cost_less_so_more_of_them_fit():
+    def summarize(it: ContextItem) -> None:
+        it.content = it.content.split(".")[0]
+
+    long_items = [ContextItem(id=f"i{n}", content=f"Finding {n}." + " supporting detail" * 200) for n in range(5)]
+    budget = TokenBudget(total_budget=1000)
+    plain = ContextBudgetEngine().synthesize(long_items, budget, destination="local")
+    engine = ContextBudgetEngine(hooks=[_Rewrite(summarize)])
+    report = engine.synthesize(long_items, budget, destination="local")
+    assert len(plain.included_items) < 5 and len(report.included_items) == 5
+    assert report.consumed_tokens == _actual(engine, report.included_items) < 50
+
+
+def test_a_rewritten_pinned_item_is_reported_over_budget_at_its_new_cost():
+    engine = ContextBudgetEngine(hooks=[_Rewrite(_expand)])
+    items = [ContextItem(id="rule", content="see the policy", pinned=True), ContextItem(id="doc", content="alpha")]
+    report = engine.synthesize(items, TokenBudget(total_budget=500), destination="local")
+    assert [it.id for it in report.included_items] == ["rule"]
+    assert report.consumed_tokens == _actual(engine, report.included_items) > 500
+    assert report.over_budget and report.overflow_tokens == report.consumed_tokens - 500
+
+
+def test_a_count_a_hook_sets_with_its_rewrite_is_kept():
+    def rewrite_and_count(it: ContextItem) -> None:
+        it.content = it.content + " resolved detail" * 150
+        it.token_count = 123  # the hook's own tokenizer
+
+    engine = ContextBudgetEngine(hooks=[_Rewrite(rewrite_and_count)])
+    report = engine.synthesize(_short_items(), TokenBudget(total_budget=1000), destination="local")
+    assert [it.token_count for it in report.included_items] == [123] * 5
+    assert report.consumed_tokens == 615
+
+
+def test_a_hook_that_clears_the_count_of_what_it_rewrote_gets_it_counted():
+    def rewrite_and_clear(it: ContextItem) -> None:
+        it.content = "one two three"
+        it.token_count = 0
+
+    engine = ContextBudgetEngine(hooks=[_Rewrite(rewrite_and_clear)])
+    report = engine.synthesize(_short_items(), TokenBudget(total_budget=1000), destination="local")
+    each = engine.token_counter.count_tokens("one two three")
+    assert [it.token_count for it in report.included_items] == [each] * 5 and report.consumed_tokens == 5 * each
+
+
+def test_counts_are_left_alone_where_no_hook_changed_the_content():
+    """A count the caller gives is the caller's (another tokenizer, a reserve): a hook that leaves the text alone,
+    or only re-costs it, must not have it replaced by the engine's own count."""
+    def recost(it: ContextItem) -> None:
+        if it.id == "i1":
+            it.token_count = 77
+
+    items = [it.model_copy(update={"token_count": 40}) for it in _short_items(3)]
+    for hook in (_Noop(), _Rewrite(recost), _Rewrite(lambda it: it.model_copy())):
+        report = ContextBudgetEngine(hooks=[hook]).synthesize(items, TokenBudget(total_budget=1000), destination="local")
+        expected = [40, 77, 40] if isinstance(hook, _Rewrite) and hook.edit is recost else [40, 40, 40]
+        assert [it.token_count for it in report.included_items] == expected
+        assert report.consumed_tokens == sum(expected)
+
+
+def test_an_item_a_hook_adds_keeps_the_count_it_came_with_or_is_counted():
+    class _Adds(_Noop):
+        def pre_prune(self, items: Sequence[ContextItem]) -> None:
+            items.append(ContextItem(id="costed", content="one two three", token_count=50))  # type: ignore[attr-defined]
+            items.append(ContextItem(id="bare", content="one two three"))  # type: ignore[attr-defined]
+
+    engine = ContextBudgetEngine(hooks=[_Adds()])
+    report = engine.synthesize(_short_items(1), TokenBudget(total_budget=1000), destination="local")
+    count = engine.token_counter.count_tokens
+    assert {it.id: it.token_count for it in report.included_items} == {
+        "i0": count("see document 0"), "costed": 50, "bare": count("one two three")}
+
+
+def test_the_recount_uses_the_engines_token_counter():
+    class _Chars:
+        def count_tokens(self, text: str) -> int:
+            return len(text)
+
+    engine = ContextBudgetEngine(token_counter=_Chars(), hooks=[_Rewrite(_expand)])
+    report = engine.synthesize(_short_items(), TokenBudget(total_budget=8000), destination="local")
+    assert report.consumed_tokens == sum(len(it.content) for it in report.included_items) <= 8000
+    assert len(report.included_items) == 8000 // len(report.included_items[0].content) == 3
+
+
+def test_an_item_a_hook_rewrote_and_marked_confidential_is_withheld_at_its_new_cost():
+    def redact(it: ContextItem) -> None:
+        if it.id == "i2":
+            it.content = "payroll row " * 50
+            it.sensitivity = "confidential"
+
+    engine = ContextBudgetEngine(hooks=[_Rewrite(redact)])
+    report = engine.synthesize(_short_items(), TokenBudget(total_budget=1000))
+    assert [it.id for it in report.withheld_items] == ["i2"]
+    assert report.withheld_items[0].token_count == _actual(engine, report.withheld_items) > 100
+    assert len(report.included_items) == 4 and report.consumed_tokens == _actual(engine, report.included_items)
