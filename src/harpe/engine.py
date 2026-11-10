@@ -5,9 +5,12 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from . import _native
-from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
+from .models import (
+    CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget, _detached_copy, _utf8,
+)
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .routing import (
     QueryIntent,
@@ -38,9 +41,13 @@ class HeuristicTokenCounter:
     def count_tokens(self, text: str) -> int:
         if not text:
             return 0
-        pieces = len(self._PIECE_RE.findall(text))
-        pieces += sum(len(run) // 3 for run in self._HEX_RUN_RE.findall(text))
-        return max(pieces, (len(text) + 3) // 4)
+        # A hex run is made of ASCII letters and digits, so it lies inside one piece, and a piece under 8
+        # characters cannot hold one: looking for runs in the long pieces alone finds exactly the runs a second
+        # pass over the whole text would, without reading the text twice.
+        pieces = self._PIECE_RE.findall(text)
+        hex_runs = self._HEX_RUN_RE.findall
+        extras = sum(len(run) // 3 for piece in pieces if len(piece) >= 8 for run in hex_runs(piece))
+        return max(len(pieces) + extras, (len(text) + 3) // 4)
 
 
 class BudgetOverflowError(ValueError):
@@ -64,15 +71,48 @@ class ControlOverflowError(BudgetOverflowError):
     pass
 
 
+def _digest_value(value: Any) -> Any:
+    """An enum enters a digest as its value, so an item built in code and the same item loaded from JSON agree."""
+    return value.value if isinstance(value, Enum) else value
+
+
+def _digest_field(value: Any) -> str:
+    """One field of a digest record: backslash, colon and newline written as ``\\\\``, ``\\:`` and ``\\n``, so no
+    field can forge a separator or a record end. A field without those characters is unchanged."""
+    return str(_digest_value(value)).replace("\\", "\\\\").replace(":", "\\:").replace("\n", "\\n")
+
+
+def _digest_dimension(dimension: Any) -> str:
+    # An absent dimension is written None, as it always was; a dimension that is the string "None" is written \None,
+    # which no escaped field can produce.
+    if dimension is None:
+        return "None"
+    text = _digest_field(dimension)
+    return "\\None" if text == "None" else text
+
+
 def pinned_policy_digest(pinned_items: Sequence[ContextItem]) -> str:
     """The canonical digest of a pinned set (H-R1), as ``SynthesisReport.pinned_policy_digest`` reports it:
-    sha256 over each pinned item's role, dimension, id and content in a fixed order, so the order the items come
-    in does not matter; ``"empty_policy"`` when nothing is pinned."""
+    sha256 over one record per pinned item, ``role:dimension:id:content`` and a newline, in a fixed order, so the
+    order the items come in does not matter; ``"empty_policy"`` when nothing is pinned.
+
+    The encoding is injective: in each field a backslash, a colon and a newline are escaped (``\\\\``, ``\\:``,
+    ``\\n``), an enum dimension as its value (``CognitiveDimension.INVARIANT`` and ``"invariant"`` agree, so the
+    digest can be recomputed from serialized items), an absent dimension as ``None`` and a dimension that is the
+    string ``"None"`` as ``\\None``. A pinned set whose fields hold no backslash, colon or newline and whose
+    dimensions are absent or plain strings other than ``"None"`` has the digest it had before these rules."""
     if not pinned_items:
         return "empty_policy"
+    entries = []
+    for it in pinned_items:
+        role, dimension = _digest_value(it.role), _digest_value(it.dimension)
+        fields = (_digest_field(role), _digest_dimension(dimension), _digest_field(it.id), _digest_field(it.content))
+        record = ":".join(fields) + "\n"
+        key = (str(role), "" if dimension is None else str(dimension), str(it.id), str(it.content))
+        entries.append((key, record))  # ties on the key are broken by the record itself
     policy_hasher = hashlib.sha256()
-    for it in sorted(pinned_items, key=lambda x: (x.role, str(x.dimension or ""), str(x.id), str(x.content))):
-        policy_hasher.update(f"{it.role}:{it.dimension}:{it.id}:{it.content}\n".encode("utf-8"))
+    for _, record in sorted(entries):
+        policy_hasher.update(_utf8(record))  # any str hashes: a lone surrogate does not raise
     return policy_hasher.hexdigest()
 
 
@@ -265,14 +305,24 @@ class ContextBudgetEngine(ContextSynthesizer):
         else:
             solver = "greedy"
             # Dantzig density order, then fill whatever slack is left in plain utility order: density alone
-            # can skip a small high-utility item that would still have fit.
-            order = sorted(range(n), key=lambda i: (-utilities[i] / weights[i], i))
+            # can skip a small high-utility item that would still have fit. Ties go to the earlier item.
+            # Both orders are stable sorts of the indexes on one list of floats built once: the order the keys
+            # ``(-utilities[i] / weights[i], i)`` and ``(-utilities[i], i)`` give, without building and comparing
+            # n tuples. A NaN utility compares as neither smaller nor larger, so with one the two forms could
+            # part ways: then (the sum is not finite) the tuple keys are used as before.
+            density = [-utilities[i] / weights[i] for i in range(n)]
+            if math.isfinite(sum(density)):
+                by_density = sorted(range(n), key=density.__getitem__)
+                by_utility = sorted(range(n), key=[-utilities[i] for i in range(n)].__getitem__)
+            else:
+                by_density = sorted(range(n), key=lambda i: (density[i], i))
+                by_utility = sorted(range(n), key=lambda i: (-utilities[i], i))
             take, used = set(), 0
-            for i in order:
+            for i in by_density:
                 if used + weights[i] <= capacity:
                     take.add(i)
                     used += weights[i]
-            for i in sorted(range(n), key=lambda i: (-utilities[i], i)):
+            for i in by_utility:
                 if i not in take and used + weights[i] <= capacity:
                     take.add(i)
                     used += weights[i]
@@ -292,6 +342,12 @@ class ContextBudgetEngine(ContextSynthesizer):
             counts[d_key] = counts.get(d_key, 0) + 1
             toks[d_key] = toks.get(d_key, 0) + it.token_count
         return counts, toks
+
+    @staticmethod
+    def _withheld_from_remote(item: ContextItem) -> bool:
+        """A remote destination is sent only items marked ``"normal"``: ``"confidential"``, and any other value
+        assigned without validation (by a hook or in place), is withheld. Fails closed."""
+        return item.sensitivity != "normal"
 
     @staticmethod
     def _is_never_pruned(item: ContextItem) -> bool:
@@ -317,23 +373,64 @@ class ContextBudgetEngine(ContextSynthesizer):
         # Ids come straight from the caller and are only unique by convention. Selection is tracked by object
         # identity, so duplicates cannot smuggle a pruned item back in, but a report keyed by id would still be
         # ambiguous for the caller. Refuse them rather than guess.
+        self._refuse_duplicate_ids(items_list, "")
+        return items_list
+
+    @staticmethod
+    def _refuse_duplicate_ids(items_list: Sequence[ContextItem], where: str) -> None:
         ids = [it.id for it in items_list]
         if len(set(ids)) != len(ids):
             dupes = sorted({i for i in ids if ids.count(i) > 1})
-            raise ValueError(f"duplicate ContextItem ids: {dupes}")
-        return items_list
+            raise ValueError(f"duplicate ContextItem ids{where}: {dupes}")
 
-    def _count_uncounted(self, items_list: List[ContextItem]) -> List[ContextItem]:
-        """Only items without a count are counted and copied. Hooks may change items in place, so with hooks
-        every item is copied."""
-        resolved: List[ContextItem] = []
+    def _count_uncounted(self, items_list: Sequence[ContextItem]) -> List[ContextItem]:
+        """The items as the ``pre_prune`` hooks, or without hooks the selection, will see them. Only items without
+        a count are counted and copied. Hooks may change items in place, so with hooks every item is copied, and
+        the copy owns its ``metadata``: ``model_copy`` alone is shallow, the copy's ``metadata`` would be the
+        caller's own dict, and a hook's write into it (a per-query score, say) would reach the caller's item and
+        every later call over it. The copy is :func:`harpe.models._detached_copy`, not
+        ``model_copy(deep=True)``: it rebuilds the dicts, lists, tuples and sets inside ``metadata`` and shares
+        every other object there, so a lock, a client or an open handle in ``metadata`` is accepted with hooks as
+        it is without them."""
+        count_tokens = self.token_counter.count_tokens
+        if self.hooks:
+            return [
+                _detached_copy(it, {"token_count": count_tokens(it.content)} if it.token_count <= 0 else None)
+                for it in items_list
+            ]
+        return [
+            it.model_copy(update={"token_count": count_tokens(it.content)}) if it.token_count <= 0 else it
+            for it in items_list
+        ]
+
+    def _settle_after_hooks(
+        self, items_list: Sequence[ContextItem], handed: Dict[int, Tuple[ContextItem, str, str, int]]
+    ) -> List[ContextItem]:
+        """The engine's own copies of the items the ``pre_prune`` hooks left, each costed as it now reads.
+
+        ``handed`` maps ``id(item)`` to ``(item, id, content, token_count)`` for every item the hooks were handed,
+        as it was then. An item is counted again when it has no count (``token_count <= 0``), and when its content
+        is no longer the content its count was taken for while the count is still that count: a hook that rewrote
+        the text (resolved a reference, summarized, redacted) and left ``token_count`` alone. The item is compared
+        with itself as handed, or, for an object the hook put in its place, with the handed item of the same id.
+        A hook that sets another count along with its rewrite keeps it, and so does an item added under a new id,
+        like a count the caller gives. Without this the selection and ``consumed_tokens`` would be made of counts
+        of text the items no longer hold."""
+        count_tokens = self.token_counter.count_tokens
+        by_item_id: Optional[Dict[str, Tuple[ContextItem, str, str, int]]] = None
+        settled: List[ContextItem] = []
         for it in items_list:
-            if it.token_count <= 0:
-                it = it.model_copy(update={"token_count": self.token_counter.count_tokens(it.content)})
-            elif self.hooks:
-                it = it.model_copy()
-            resolved.append(it)
-        return resolved
+            was = handed.get(id(it))
+            if was is None:
+                if by_item_id is None:
+                    by_item_id = {entry[1]: entry for entry in handed.values()}
+                was = by_item_id.get(it.id)
+            tokens = it.token_count
+            if tokens <= 0 or (was is not None and tokens == was[3] and it.content != was[2]):
+                settled.append(_detached_copy(it, {"token_count": count_tokens(it.content)}))
+            else:
+                settled.append(_detached_copy(it))
+        return settled
 
     @staticmethod
     def _take_in_order(ordered: Sequence[ContextItem], capacity: int) -> Tuple[List[ContextItem], List[ContextItem]]:
@@ -487,7 +584,14 @@ class ContextBudgetEngine(ContextSynthesizer):
         now: Optional[float] = None,
     ) -> SynthesisReport:
         """``destination``: "remote" (default) withholds every item marked confidential, pinned or not, before any
-        budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything.
+        budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything. The check is
+        made again after the ``pre_prune`` hooks, on the items they leave: an item a hook marks confidential is
+        withheld as well (listed after the items marked up front), and an item a hook left without a token count,
+        or whose content it rewrote without setting a new count, is counted again, so selection only sees what
+        was checked. Ids must be unique there too: an item a hook adds under an id already present (one a replayed
+        report carries, say) raises ``ValueError``, as a duplicate in ``items`` does. Hooks work on copies that
+        own their fields and the dicts, lists, tuples and sets inside ``metadata``, so what they write never
+        reaches ``items``; any other object held in ``metadata`` (a client, a lock) is shared, not cloned.
         ``prune_policy``: alias for ``policy`` for ergonomics across benchmarks. An unknown policy raises
         ``ValueError``.
         ``query``: optional prompt/question string for automatic intent detection.
@@ -519,11 +623,23 @@ class ContextBudgetEngine(ContextSynthesizer):
         items_list = self._normalise_items(items, persona_item, evaluated_intent)
         withheld: List[ContextItem] = []
         if destination == "remote":
-            withheld = [it for it in items_list if it.sensitivity == "confidential"]
-            items_list = [it for it in items_list if it.sensitivity != "confidential"]
+            withheld = [it for it in items_list if self._withheld_from_remote(it)]
+            items_list = [it for it in items_list if not self._withheld_from_remote(it)]
         resolved_items = self._count_uncounted(items_list)
-        for hook in self.hooks:
-            hook.pre_prune(resolved_items)
+        if self.hooks:
+            # A post_prune hook is handed the report, withheld items included, so those are copies as well.
+            withheld = [_detached_copy(it) for it in withheld]
+            handed = {id(it): (it, it.id, it.content, it.token_count) for it in resolved_items}
+            for hook in self.hooks:
+                hook.pre_prune(resolved_items)
+            # Hooks work on copies and may reclassify, rewrite or add to them. The engine takes its own copies of
+            # what they left, and on those decides again what each item costs, what is withheld and that each id
+            # is unique, so the items selected are the items checked.
+            resolved_items = self._settle_after_hooks(resolved_items, handed)
+            if destination == "remote":
+                withheld.extend(it for it in resolved_items if self._withheld_from_remote(it))
+                resolved_items = [it for it in resolved_items if not self._withheld_from_remote(it)]
+            self._refuse_duplicate_ids(withheld + resolved_items, " after the pre_prune hooks")
 
         # Recency is measured from the newest item, not from the wall clock, so a replay scores identically.
         reference_time = now

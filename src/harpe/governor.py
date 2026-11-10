@@ -48,6 +48,12 @@ class GovernorDecision(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+def _is_revoked(item: ContextItem) -> bool:
+    """Whether the item's ``epistemic_state`` marks it revoked, in any letter case (``"revoked"``, ``"Revoked"``,
+    ``"REVOKED"``). Invariants and history directives are judged by this one rule."""
+    return "revoked" in str(item.metadata.get("epistemic_state", "") or "").casefold()
+
+
 class BehavioralGovernor:
     """Evaluates candidate actions against active operational invariants and epistemic boundaries.
 
@@ -136,7 +142,7 @@ class BehavioralGovernor:
 
             # Rule: Epistemic boundary discipline. Only a non-empty key can match: '' is a substring of every
             # string, so a revoked invariant without a key used to suppress every action.
-            if "revoked" in str(inv.metadata.get("epistemic_state", "")).lower():
+            if _is_revoked(inv):
                 key = str(inv.metadata.get("key", "") or "").strip().lower()
                 if key and key in candidate_action.lower():
                     reasons.append(f"Action relies on revoked epistemic state in '{inv.id}'.")
@@ -144,8 +150,7 @@ class BehavioralGovernor:
         # 3. Check for contradictory directives in candidate history
         if candidate_history:
             for hist in candidate_history:
-                hist_state = hist.metadata.get("epistemic_state", "")
-                if hist_state == "revoked":
+                if _is_revoked(hist):
                     contradictions.append(f"Candidate history item '{hist.id}' has been revoked.")
 
         # Determine verdict based on findings

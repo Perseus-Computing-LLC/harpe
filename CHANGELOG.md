@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fencing and compiled graphs: `CompiledGraph.invoke` enforces `lease_fencing_token`. A run is admitted only with a
+  token at least the newest the graph has run under; a holder superseded before a node, or while a node runs,
+  stops with the new `StaleFencingTokenError` and runs no further node, and once a token has been used a run
+  without one is refused. A non-int token raises `TypeError`. `compile()` snapshots the nodes, edges and branch
+  maps (including the caller's `path_map`), so later builder edits no longer rewire a compiled graph.
+- Confidential withholding: for `destination="remote"`, `synthesize` checks sensitivity again after the
+  `pre_prune` hooks, so an item a hook marks confidential is withheld, and any sensitivity other than `"normal"`
+  is withheld (fail closed); items a hook leaves uncounted are counted before selection. `TwoPassBuild` takes
+  `destination` (default `"remote"`, like `synthesize`) and, for remote, refuses a report that includes a
+  confidential item or a confidential body or description, so Pass 2 cannot send what Pass 1 withheld.
+- Two-pass receipts: `emit()` seals the build, so `request()` after the receipt raises `RuntimeError` instead of
+  changing the context the receipt describes. The build keeps its own copies of the items it is given and hands
+  out copies from `items()`. A report that repeats an id across its included, pruned and withheld items raises
+  `ValueError`: a repeated row used to be handed out twice by `items()` but counted once in the receipt.
+- Hooks on copies: with hooks set, `synthesize` copies items before the `pre_prune` hooks, so a hook that
+  writes into an item's `metadata` (a per-query score, say) no longer writes into the caller's item and every
+  later call over it; the withheld items a `post_prune` hook is handed are copies too. Ids are checked again
+  after the `pre_prune` hooks: an item a hook adds or renames under an id already present (one a replayed report
+  carries, or a withheld item's) raises `ValueError`, as a duplicate in `items` does.
+- Digests and handles: `pinned_policy_digest` escapes `\`, `:` and newlines in each field and hashes an enum
+  dimension as its value, so different pinned sets cannot share a digest and a digest recomputed from serialized
+  items matches. `dropped_ids_sha256` escapes `\` and newlines in ids, and the text a DTOC reference id hashes
+  escapes `\` and `:` in the tool name, so a tool name and its output cannot run together into another
+  artifact's text. Digests are unchanged for input without those characters and with absent or plain-string
+  dimensions; a pinned set with an enum dimension now has the digest of its serialized form, and a dimension
+  that is the string `"None"` is no longer hashed like an absent one.
+- DTOC refs: a reference id is the first 128 bits of that sha256 (`dtoc_` and 32 hex digits), not 48 bits, which
+  a birthday search of about 2^24 hashes could collide, and `maybe_compress` raises `ValueError` rather than
+  store a different tool output under a ref its store already holds, so `restore()` keeps returning the output
+  a placeholder summarized. The same tool and output compressed again still refresh their own ref. Consumers
+  that match a ref by its length must accept the longer form.
+- DTOC placeholders: when a ref, tool name, scope or exit code holds whitespace, `]`, `%` or another non-printing
+  character, the header carries `enc=pct` right after the ref and percent-encodes every value, so
+  `parse_placeholder` reads back the artifact's own ref, tool, scope and flags, not a header such text ended
+  early or extended with tokens of its own. Other headers are written as before, and placeholders written by
+  earlier releases still parse, except that a `ref`, `tool` or `scope` spelled `true` or `false` is now read as
+  that text, not as a bool. The last line now reads `[Use ref='...' to expand if needed]`.
+- Typed fields over free metadata: `DynamicToolCompressor.to_context_item` writes `ref_id`, `tool_name`, `scope`,
+  `exit_code`, `partial` (and `confidential`, when present) over the caller's metadata, matching the placeholder,
+  and marks the item confidential whenever its placeholder does. `OpenLoopTracker.to_context_items` writes each
+  loop's own `loop_id` and `status` over its metadata. `ContextItem` and `TokenBudget` validation no longer writes
+  generated ids or resolved aliases into the caller's dict.
+- Order and case: a matching `SuppressionController` hard mute now always mutes whatever order rules were added
+  in, and otherwise the strongest soft rule applies. `BehavioralGovernor` treats a history directive's
+  `epistemic_state` as revoked in any letter case, as it already did for invariants. `ProfileLedger.add` without
+  `order` places turns by arrival, so the first statement stays the established record and the latest is current.
+- What a copy owns: the copies `synthesize` gives its hooks and the copies `TwoPassBuild` keeps and hands out
+  rebuild every dict, list, tuple and set inside `metadata` and share any other object held there. They are no
+  longer deep copies, which raised `TypeError` on metadata holding an object that cannot be copied (a lock, a
+  client, an open handle) as soon as a hook was registered or a two-pass build was made. A write into a copy's
+  `metadata`, at any depth, still does not reach the item it was copied from; a change to the state of an object
+  held in `metadata` does, as it does without hooks. One no-op hook over 10,000 counted items costs about half of
+  what the deep copies did (188 to 96 ms), a third with an embedding in each item's metadata (973 to 329 ms).
+- Cost after a hook's rewrite: an item whose content a `pre_prune` hook rewrote and whose `token_count` the hook
+  left alone is counted again before selection, so unpinned items are added only while they fit and
+  `consumed_tokens` is the count of the text the report includes, not of the text before the hooks. A count a
+  hook sets together with its rewrite is kept, as is the count of an item no hook rewrote.
+- Lone surrogates: text holding half of a surrogate pair (`json.loads` of an escaped emoji cut by truncation)
+  no longer raises `UnicodeEncodeError` from `DynamicToolCompressor.maybe_compress`, from `synthesize` when the
+  item is pinned, or from `dropped_ids_sha256`. Refs, byte sizes and digests are taken over UTF-8 with
+  `surrogatepass`; for text without a lone surrogate they are unchanged, so placeholders, sidecars and receipts
+  written before still match.
+
+### Changed
+
+- `HeuristicTokenCounter.count_tokens` looks for hex runs inside the pieces of 8 or more characters instead of in
+  a second pass over the text: the same count for every text, about 20% less time (352 to 274 ms over 10,000
+  items, 11.7 M characters).
+- The greedy fallback of `PrunePolicy.KNAPSACK_DP` (above `max_cells`) sorts item indexes on one list of floats
+  instead of on a tuple per item: the same selection, about 30% less time in the solve at 10,000 items (7.1 to
+  4.9 ms).
+
 ## [0.1.0-alpha.12] - 2026-11-03
 
 ### Added

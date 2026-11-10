@@ -14,6 +14,7 @@ import copy
 import inspect
 import json
 import logging
+import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,12 @@ logger = logging.getLogger(__name__)
 # Constants
 START = "__start__"
 END = "__end__"
+
+
+class StaleFencingTokenError(RuntimeError):
+    """Raised by :meth:`CompiledGraph.invoke` when a run's lease fencing token is older than the newest token the
+    graph has run under, or a run carries no token once one has been used: the run's lease was superseded, so it
+    may not execute another node."""
 
 
 class ToolDefinition(BaseModel):
@@ -107,6 +114,7 @@ class StateGraph:
         """Add dynamic branching from a node based on state evaluation."""
         if source not in self.nodes:
             raise KeyError(f"Source node '{source}' not registered")
+        path_map = dict(path_map)  # the caller's dict stays theirs: later edits to it cannot bypass this check
         for target in path_map.values():
             if target != END and target not in self.nodes:
                 raise KeyError(f"Branch target node '{target}' not registered")
@@ -114,7 +122,8 @@ class StateGraph:
         return self
 
     def compile(self) -> CompiledGraph:
-        """Validate and compile graph into an executable pipeline."""
+        """Validate and compile graph into an executable pipeline. The compiled graph holds a snapshot of the
+        nodes and edges: editing this builder afterwards does not change a graph compiled earlier."""
         if not self.entry_point:
             raise ValueError("StateGraph cannot compile without an entry point")
         return CompiledGraph(
@@ -127,7 +136,10 @@ class StateGraph:
 
 
 class CompiledGraph:
-    """Compiled, verified executable state machine."""
+    """Compiled, verified executable state machine.
+
+    It keeps its own copies of the nodes, edges and branch maps it is given, so the route is the one that existed
+    when it was built. It also keeps the newest lease fencing token it has run under (see :meth:`invoke`)."""
 
     def __init__(
         self,
@@ -137,11 +149,46 @@ class CompiledGraph:
         entry_point: str,
         state_schema: Optional[Type[BaseModel]] = None,
     ) -> None:
-        self.nodes = nodes
-        self.edges = edges
-        self.conditional_edges = conditional_edges
+        self.nodes = dict(nodes)
+        self.edges = dict(edges)
+        self.conditional_edges = {
+            source: (condition_fn, dict(path_map)) for source, (condition_fn, path_map) in conditional_edges.items()
+        }
         self.entry_point = entry_point
         self.state_schema = state_schema
+        self._fence_lock = threading.Lock()
+        self._fence_high_water: Optional[int] = None
+
+    @property
+    def fencing_high_water(self) -> Optional[int]:
+        """The newest lease fencing token this graph has run under; ``None`` before any fenced run."""
+        return self._fence_high_water
+
+    def _admit_token(self, token: Optional[int]) -> None:
+        """Admit a run's token at its start: it must be at least the newest token seen, and becomes the newest."""
+        if token is not None and (isinstance(token, bool) or not isinstance(token, int)):
+            raise TypeError(f"lease_fencing_token must be an int or None, not {type(token).__name__}")
+        with self._fence_lock:
+            self._check_token_locked(token)
+            if token is not None:
+                self._fence_high_water = token
+
+    def _check_token(self, token: Optional[int]) -> None:
+        with self._fence_lock:
+            self._check_token_locked(token)
+
+    def _check_token_locked(self, token: Optional[int]) -> None:
+        high = self._fence_high_water
+        if high is None:
+            return
+        if token is None:
+            raise StaleFencingTokenError(
+                f"this graph has run under lease fencing token {high}; a run without a token is refused"
+            )
+        if token < high:
+            raise StaleFencingTokenError(
+                f"lease fencing token {token} is older than token {high}, which this graph has already run under"
+            )
 
     def invoke(
         self,
@@ -149,7 +196,15 @@ class CompiledGraph:
         max_steps: int = 25,
         lease_fencing_token: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Execute graph with state checkpoints, recursion limits, and optional concurrency fencing."""
+        """Execute graph with state checkpoints, recursion limits, and optional concurrency fencing.
+
+        Fencing: a run that passes ``lease_fencing_token`` is admitted only when its token is at least the newest
+        token this graph has run under, and that token becomes the newest. Before each node runs, and again before
+        a node's output is applied, the run's token is checked against the newest one; once a newer holder has run,
+        the older run stops with :class:`StaleFencingTokenError` and executes no further node. After the graph has
+        run under a token, a run without one is refused the same way, since it could be a superseded holder that
+        dropped its token. Runs without a token are unfenced only while no token has been used."""
+        self._admit_token(lease_fencing_token)
         current_state = copy.deepcopy(initial_state)
         current_node = self.entry_point
         step_count = 0
@@ -164,15 +219,17 @@ class CompiledGraph:
                 "fencing_token": lease_fencing_token,
             }
 
+            self._check_token(lease_fencing_token)  # superseded since the last node: run nothing more
             try:
                 state_update = node_fn(current_state)
-                if isinstance(state_update, dict):
-                    current_state.update(state_update)
             except Exception as e:
                 logger.error(f"Error executing StateGraph node '{current_node}': {e}")
                 checkpoint["error"] = str(e)
                 history.append(checkpoint)
                 raise
+            self._check_token(lease_fencing_token)  # superseded while the node ran: do not apply its output
+            if isinstance(state_update, dict):
+                current_state.update(state_update)
 
             checkpoint["output_state"] = copy.deepcopy(current_state)
             history.append(checkpoint)

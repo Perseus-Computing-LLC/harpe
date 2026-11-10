@@ -13,10 +13,35 @@ from __future__ import annotations
 import hashlib
 import time
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+from urllib.parse import quote, unquote
 from pydantic import BaseModel, Field
+from .models import _utf8
 
 DEFAULT_STORE_MAX_BYTES = 64 * 1024 * 1024
+
+# A ref is the handle ``restore`` takes and the one a placeholder tells the model to request, so two different
+# outputs must never share one. It is the first 128 bits of a sha256: two outputs with one ref take about 2**64
+# hashes to find. Earlier releases kept 48 bits, which a birthday search of about 2**24 hashes defeats.
+_REF_HEX_DIGITS = 32
+
+# Written right after the ref when the header's values are percent-encoded (see ``format_placeholder``). A header
+# without it is read as written, which is also how every earlier release wrote and read its placeholders.
+_HEADER_ENCODED = "enc=pct"
+
+# Header values that are text: read back as written, never as a bool or a number, whatever they spell.
+_HEADER_TEXT_KEYS = frozenset({"ref", "tool", "scope"})
+
+
+def _header_unsafe(ch: str) -> bool:
+    """A character a header value cannot carry as is: ``]`` ends the header, whitespace ends the token (and lets
+    the rest pass for another ``key=value``), ``%`` is the escape itself, and other non-printing characters
+    (controls, format and separator characters) would be invisible."""
+    return ch in "%]" or ch.isspace() or not ch.isprintable()
+
+
+def _header_encode(text: str) -> str:
+    return "".join(quote(ch, safe="", errors="surrogatepass") if _header_unsafe(ch) else ch for ch in text)
 
 
 class CompressedToolOutput(BaseModel):
@@ -34,30 +59,56 @@ class CompressedToolOutput(BaseModel):
     partial: bool = Field(default=False, description="Whether output is truncated or partial (e.g. killed process exit 143).")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Execution metadata.")
 
+    def _sidecar(self) -> Tuple[bool, Optional[str], Optional[int], bool]:
+        """The typed sidecar ``(confidential, scope, exit_code, partial)`` as the placeholder and the context item
+        both report it: a typed field wins over the same key in the free ``metadata``, which only fills a field that
+        is unset; confidential and partial are set when either says so."""
+        ec = self.exit_code if self.exit_code is not None else self.metadata.get("exit_code")
+        return (
+            self.confidential or bool(self.metadata.get("confidential")),
+            self.scope or self.metadata.get("scope"),
+            ec,
+            self.partial or bool(self.metadata.get("partial")) or ec == 143,
+        )
+
     def format_placeholder(self) -> str:
-        """Render the compact, structured placeholder inserted into active context."""
-        tokens = [
-            f"ref={self.ref_id}",
-            f"tool={self.tool_name}",
+        """Render the compact, structured placeholder inserted into active context.
+
+        The header is space-separated ``key=value`` tokens. When the ref, the tool name, the scope or the exit code
+        holds a ``]``, a ``%``, whitespace or another non-printing character, ``enc=pct`` follows the ref and every
+        value is percent-encoded (UTF-8): no value can end the header or pass for a token of its own, so
+        ``parse_placeholder`` reads back exactly this artifact's ref and sidecar. Any other header is written as
+        earlier releases wrote it."""
+        confidential, scope_val, ec, partial = self._sidecar()
+        text = {"ref": str(self.ref_id), "tool": str(self.tool_name)}
+        if scope_val:
+            text["scope"] = str(scope_val)
+        if ec is not None:
+            text["exit_code"] = str(ec)
+        if any(_header_unsafe(ch) for value in text.values() for ch in value):
+            text = {key: _header_encode(value) for key, value in text.items()}
+            tokens = [f"ref={text['ref']}", _HEADER_ENCODED]
+        else:
+            tokens = [f"ref={text['ref']}"]
+        tokens += [
+            f"tool={text['tool']}",
             f"lines={self.raw_lines}",
             f"bytes={self.raw_byte_size}",
         ]
-        if self.confidential or bool(self.metadata.get("confidential")):
+        if confidential:
             tokens.append("confidential=true")
-        scope_val = self.scope or self.metadata.get("scope")
-        if scope_val:
-            tokens.append(f"scope={scope_val}")
-        ec = self.exit_code if self.exit_code is not None else self.metadata.get("exit_code")
-        if ec is not None:
-            tokens.append(f"exit_code={ec}")
-        if self.partial or bool(self.metadata.get("partial")) or ec == 143:
+        if "scope" in text:
+            tokens.append(f"scope={text['scope']}")
+        if "exit_code" in text:
+            tokens.append(f"exit_code={text['exit_code']}")
+        if partial:
             tokens.append("partial=true")
 
         header = " ".join(tokens)
         return (
             f"[TOOL_OUTPUT_COMPRESSED: {header}]\n"
             f"Summary: {self.summary}\n"
-            f"[Use ref='{self.ref_id}' to request full uncompressed expansion if needed]"
+            f"[Use ref='{text['ref']}' to expand if needed]"
         )
 
 
@@ -157,17 +208,29 @@ class DynamicToolCompressor:
 
     @classmethod
     def parse_placeholder(cls, text: str) -> Optional[Dict[str, Any]]:
-        """Parse structured header tokens from a [TOOL_OUTPUT_COMPRESSED: ...] placeholder."""
+        """Parse structured header tokens from a [TOOL_OUTPUT_COMPRESSED: ...] placeholder.
+
+        Reads both header forms ``CompressedToolOutput.format_placeholder`` writes: with ``enc=pct`` right after
+        the ref every value is percent-decoded, and without it the values are taken as written, as earlier
+        releases wrote them. ``ref``, ``tool`` and ``scope`` are always text; ``lines``, ``bytes`` and
+        ``exit_code`` are ints when they read as one; any other ``true``/``false`` is a bool."""
         import re
         m = re.search(r"\[TOOL_OUTPUT_COMPRESSED:\s+([^\]]+)\]", text)
         if not m:
             return None
         tokens = m.group(1).split()
+        encoded = len(tokens) > 1 and tokens[1] == _HEADER_ENCODED
+        if encoded:
+            del tokens[1]
         result: Dict[str, Any] = {}
         for t in tokens:
             if "=" in t:
                 k, v = t.split("=", 1)
-                if v.lower() == "true":
+                if encoded:
+                    v = unquote(v, errors="surrogatepass")
+                if k in _HEADER_TEXT_KEYS:
+                    result[k] = v
+                elif v.lower() == "true":
                     result[k] = True
                 elif v.lower() == "false":
                     result[k] = False
@@ -200,7 +263,9 @@ class DynamicToolCompressor:
 
         lines = output.splitlines()
         raw_lines = len(lines)
-        raw_size = len(output.encode("utf-8"))
+        # Tool output cut in the middle of an escaped emoji holds a lone surrogate: _utf8 sizes and hashes it
+        # instead of raising, and gives valid text the size and the ref it always had.
+        raw_size = len(_utf8(output))
 
         # Resolve typed sidecar flags from arguments and metadata
         meta = dict(metadata or {})
@@ -209,9 +274,18 @@ class DynamicToolCompressor:
         ec = exit_code if exit_code is not None else meta.get("exit_code")
         is_partial = partial or bool(meta.get("partial")) or (ec == 143) or ("[TRUNCATED" in output)
 
-        # Compute deterministic reference ID
-        h = hashlib.sha256(f"{tool_name}:{output}".encode("utf-8")).hexdigest()[:12]
+        # Compute deterministic reference ID: the first 128 bits of a sha256 (``_REF_HEX_DIGITS``). In the tool name a
+        # backslash and a colon are escaped, so the colon after it always ends it: tool "a:b" with output "c" and
+        # tool "a" with output "b:c" hash different text. A name without either character hashes as before.
+        safe_tool = str(tool_name).replace("\\", "\\\\").replace(":", "\\:")
+        h = hashlib.sha256(_utf8(f"{safe_tool}:{output}")).hexdigest()[:_REF_HEX_DIGITS]
         ref_id = f"dtoc_{h}"
+        # The same tool and output always get the same ref, and storing them again only refreshes the artifact.
+        # A ref already holding another tool's or another output is never replaced: restore() of that ref must keep
+        # returning the output its placeholder summarized.
+        held = self._store.get(ref_id)
+        if held is not None and (held.tool_name != tool_name or held.raw_payload != output):
+            raise ValueError(f"DTOC ref {ref_id} already holds a different tool output; refusing to replace it")
 
         # Generate preview summary
         effective_tail = max(self.tail_lines, 5) if (ec not in (None, 0) or is_partial) else self.tail_lines
@@ -249,23 +323,32 @@ class DynamicToolCompressor:
         role: str = "tool",
         priority: int = 50,
     ) -> Any:
-        """Convert a CompressedToolOutput into a ContextItem, preserving sidecar flags."""
+        """Convert a CompressedToolOutput into a ContextItem, preserving sidecar flags.
+
+        The item's metadata is the artifact's free metadata with the typed sidecar written over it: ``ref_id``,
+        ``tool_name``, ``scope``, ``exit_code`` and ``partial`` (and ``confidential`` when the free metadata has that
+        key) are always this artifact's own, as its placeholder reports them, so metadata carried over from an
+        earlier item cannot point this one at the earlier artifact or replace its scope or exit code."""
         from .models import ContextItem
 
+        confidential, scope, exit_code, partial = artifact._sidecar()
+        metadata = dict(artifact.metadata)
+        if "confidential" in metadata:
+            metadata["confidential"] = confidential
+        metadata.update(
+            ref_id=artifact.ref_id,
+            tool_name=artifact.tool_name,
+            scope=scope,
+            exit_code=exit_code,
+            partial=partial,
+        )
         return ContextItem(
             id=f"item_{artifact.ref_id}",
             role=role,
             content=artifact.format_placeholder(),
             priority=priority,
-            sensitivity="confidential" if artifact.confidential else "normal",
-            metadata={
-                "ref_id": artifact.ref_id,
-                "tool_name": artifact.tool_name,
-                "scope": artifact.scope,
-                "exit_code": artifact.exit_code,
-                "partial": artifact.partial,
-                **artifact.metadata,
-            },
+            sensitivity="confidential" if confidential else "normal",
+            metadata=metadata,
         )
 
     def restore(self, ref_id: str) -> Optional[str]:
