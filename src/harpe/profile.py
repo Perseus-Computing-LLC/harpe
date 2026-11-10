@@ -652,15 +652,27 @@ class ProfileLedger:
                              for a in self.specs.values()}
         self._statements: Dict[str, List[ProfileStatement]] = {name: [] for name in self.specs}
         self._sorted = True
+        self._arrivals = 0  # add() calls so far: the position of a turn given without an order
         self.latest_order: Optional[Tuple] = None
         self.latest_date: Optional[str] = None
 
     # -- ingest -------------------------------------------------------------------------------------------------
     def add(self, unit_id: str, text: str, *, date: Optional[str] = None, order: Tuple = (),
             speaker: str = "user") -> List[ProfileStatement]:
-        """Record the statements in one turn. Only the user's own turns are read."""
+        """Record the statements in one turn. Only the user's own turns are read.
+
+        ``order`` is the turn's position, compared as a tuple whose first element is the session, e.g.
+        ``(session, turn)``. A turn given without one (the default) is placed by arrival: the n-th call to ``add``
+        gets ``(n,)``, so the timeline stays in the order the turns came in and each such turn is its own session.
+        A sentence's index within its turn only orders the statements of that turn. Give every turn an order, or
+        none: arrival positions are not comparable with orders a caller chose. Only a given order moves
+        ``latest_order``."""
+        arrival = self._arrivals
+        self._arrivals += 1
         if order and (self.latest_order is None or tuple(order) > self.latest_order):
             self.latest_order, self.latest_date = tuple(order), date
+        if not order:
+            order = (arrival,)
         if str(speaker).lower() != "user":
             return []
         found: List[ProfileStatement] = []

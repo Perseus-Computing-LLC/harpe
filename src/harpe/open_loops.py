@@ -114,7 +114,9 @@ class OpenLoopTracker:
                     content=content,
                     priority=loop.priority,
                     dimension=CognitiveDimension.GOAL,
-                    metadata={"loop_id": loop.id, "status": loop.status.value, **loop.metadata},
+                    # The loop's own id and status come last: caller metadata carried over from another item
+                    # cannot make this item name that loop or report its status.
+                    metadata={**loop.metadata, "loop_id": loop.id, "status": loop.status.value},
                 )
             )
         return items
