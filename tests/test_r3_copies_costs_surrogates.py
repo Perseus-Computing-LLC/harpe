@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Sequence
 
 import pytest
 
-from harpe import ContextBudgetEngine, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
+from harpe import ContextBudgetEngine, ContextItem, PrunePolicy, SynthesisReport, TokenBudget, TwoPassBuild
 from harpe.models import _detached_copy
 
 
@@ -236,3 +236,61 @@ def test_an_item_a_hook_adds_enters_the_report_as_a_copy_of_the_hooks_object():
     assert len(added) == 1 and added[0] is not reminder
     added[0].metadata["tags"].append("edited by the caller")
     assert reminder.metadata == {"tags": ["hook"]}
+
+
+# ---- two-pass builds: the same copies ------------------------------------------------------------------------------
+
+def _live_report() -> SynthesisReport:
+    items = [
+        ContextItem(id="rule", content="always answer in English", token_count=6, pinned=True,
+                    metadata={"client": _Handle(), "tags": ["policy"]}),
+        ContextItem(id="row", content="short description", token_count=5,
+                    metadata={"client": _Handle(), "lock": threading.Lock(), "tags": ["a"]}),
+        ContextItem(id="other", content="another description", token_count=5, metadata={"tags": ["b"]}),
+    ]
+    return ContextBudgetEngine().synthesize(items, TokenBudget(total_budget=1000))
+
+
+@pytest.mark.parametrize("rows", ["bodies", "descriptions"])
+@pytest.mark.parametrize("counted", [True, False])
+def test_a_build_accepts_live_objects_in_its_items_rows_and_tier0(rows, counted):
+    report = _live_report()
+    given = {
+        "row": ContextItem(id="row", content="the full body " * 10, token_count=40 if counted else 0,
+                           metadata={"client": _Handle(), "tags": ["body"]}),
+        "other": ContextItem(id="other", content="more text " * 10, token_count=30 if counted else 0),
+    }
+    build = TwoPassBuild(report, budget_tokens=500, count_tokens=lambda text: len(text.split()), **{rows: given})
+    assert build.request("row") is True
+    out = build.items()
+    assert [it.id for it in out] == ["rule", "row", "other"]
+    # The live objects are the caller's; the items and the containers around them are the build's.
+    assert out[0].metadata["client"] is report.included_items[0].metadata["client"]
+    assert out[0] is not report.included_items[0] and out[0].metadata["tags"] is not report.included_items[0].metadata["tags"]
+
+
+def test_a_build_and_the_items_it_hands_out_share_no_container_with_the_report_or_each_other():
+    report = _live_report()
+    bodies = {
+        "row": ContextItem(id="row", content="the full body " * 10, token_count=40, metadata={"tags": ["body"]}),
+        "other": ContextItem(id="other", content="more text " * 10, token_count=30, metadata={"nested": {"k": ["v"]}}),
+    }
+    build = TwoPassBuild(report, bodies=bodies, budget_tokens=500)
+    assert build.request("row") is True and build.request("other") is True
+    # Edits to what the caller gave, after the build was made, do not reach it ...
+    report.included_items[0].metadata["tags"].append("edited")
+    bodies["row"].metadata["tags"].append("edited")
+    bodies["other"].metadata["nested"]["k"].append("edited")
+    bodies["row"].content = "edited after the build"
+    first = build.items()
+    assert [it.metadata.get("tags") for it in first] == [["policy"], ["body"], None]
+    assert first[2].metadata == {"nested": {"k": ["v"]}}
+    assert first[1].content == "the full body " * 10
+    # ... and neither do edits to the items it handed out.
+    first[0].metadata["tags"].append("edited")
+    first[2].metadata["nested"]["k"].append("edited")
+    first[1].content = "edited"
+    second = build.items()
+    assert [it.metadata.get("tags") for it in second] == [["policy"], ["body"], None]
+    assert second[2].metadata == {"nested": {"k": ["v"]}} and second[1].content == "the full body " * 10
+    assert build.used_tokens == 6 + 40 + 30

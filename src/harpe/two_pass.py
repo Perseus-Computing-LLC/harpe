@@ -9,7 +9,9 @@ a tier-0 item's tokens is refused and the pinned set and its ``pinned_policy_dig
 Each build emits at most one ``harpe.context_built`` receipt, ints and strings only, written to the Argus ledger
 whose path the caller passes. There is no default path: a caller that does not name a ledger cannot write one.
 Writing the receipt seals the build: a later ``request`` raises, so the context the build hands out is always the
-one its receipt describes. The build keeps its own copies of the items it is given and hands out copies.
+one its receipt describes. The build keeps its own copies of the items it is given and hands out copies. A copy
+owns every field the receipt accounts for and the dicts, lists, tuples and sets inside ``metadata``; any other
+object held there (a lock, a client, an open handle) is shared, never cloned.
 
 A build continues a Pass 1 made for one destination, ``"remote"`` unless the caller says ``"local"``, as
 :meth:`ContextBudgetEngine.synthesize` does. For ``"remote"`` no confidential item may enter the context: a report
@@ -24,7 +26,7 @@ import threading
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 from .engine import ContextBudgetEngine, pinned_policy_digest
-from .models import ContextItem, SynthesisReport
+from .models import ContextItem, SynthesisReport, _detached_copy
 
 __all__ = [
     "CONTEXT_BUILT_EVENT",
@@ -203,15 +205,17 @@ class TwoPassBuild:
         self._lock = threading.Lock()  # a request cannot land between the receipt's payload and its write
 
     def _counted(self, item: ContextItem) -> ContextItem:
-        """The build's own copy of ``item``, counted: later edits to the caller's object do not reach the build."""
+        """The build's own copy of ``item``, counted: later edits to the caller's object do not reach the build.
+        The copy is :func:`harpe.models._detached_copy`, which does not clone the objects ``metadata`` holds, so
+        an item carrying one that cannot be copied builds like any other."""
         if item.token_count > 0:
-            return item.model_copy(deep=True)
+            return _detached_copy(item)
         if self._count_tokens is None:
             raise ValueError(f"item {item.id!r} has no token count; pass count_tokens=")
         tokens = self._count_tokens(item.content)
         if type(tokens) is not int or tokens < 0:
             raise ValueError(f"count_tokens returned {tokens!r} for item {item.id!r}")
-        return item.model_copy(update={"token_count": tokens}, deep=True)
+        return _detached_copy(item, {"token_count": tokens})
 
     # ---- Pass 2 ----
     def request(self, item_id: str) -> bool:
@@ -278,7 +282,7 @@ class TwoPassBuild:
                 item = self._tier0[item_id]
             else:
                 item = self._body[item_id] if item_id in self._expanded else self._desc[item_id]
-            out.append(item.model_copy(deep=True))
+            out.append(_detached_copy(item))
         return out
 
     # ---- Receipt ----
