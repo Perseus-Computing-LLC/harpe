@@ -573,11 +573,7 @@ class ContextBudgetEngine(ContextSynthesizer):
             if destination == "remote":
                 withheld.extend(it for it in resolved_items if self._withheld_from_remote(it))
                 resolved_items = [it for it in resolved_items if not self._withheld_from_remote(it)]
-            resolved_items = [
-                it if it.token_count > 0
-                else it.model_copy(update={"token_count": self.token_counter.count_tokens(it.content)})
-                for it in resolved_items
-            ]
+            resolved_items = self._count_uncounted(resolved_items)
 
         # Recency is measured from the newest item, not from the wall clock, so a replay scores identically.
         reference_time = now
