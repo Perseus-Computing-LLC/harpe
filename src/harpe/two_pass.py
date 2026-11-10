@@ -26,7 +26,7 @@ import threading
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 from .engine import ContextBudgetEngine, pinned_policy_digest
-from .models import ContextItem, SynthesisReport, _detached_copy
+from .models import ContextItem, SynthesisReport, _detached_copy, _utf8
 
 __all__ = [
     "CONTEXT_BUILT_EVENT",
@@ -64,7 +64,7 @@ def dropped_ids_sha256(ids: Iterable[str]) -> str:
     Within an id a backslash is written ``\\\\`` and a newline ``\\n``, and an empty id is a lone ``\\``, so one id
     cannot pass for several and the hash names exactly one set of ids. Non-empty ids without a backslash or a
     newline hash as they did before these rules."""
-    return hashlib.sha256("\n".join(sorted(_dropped_id_record(i) for i in ids)).encode("utf-8")).hexdigest()
+    return hashlib.sha256(_utf8("\n".join(sorted(_dropped_id_record(i) for i in ids)))).hexdigest()
 
 
 def _check_payload(payload: Mapping[str, Any]) -> Dict[str, Union[int, str]]:

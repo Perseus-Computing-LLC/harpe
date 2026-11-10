@@ -128,6 +128,17 @@ class ContextItem(BaseModel):
         return data
 
 
+def _utf8(text: str) -> bytes:
+    """The bytes every digest, ref and byte size in this package is taken over: UTF-8, with a lone surrogate
+    written as the three bytes UTF-8 would give that code point (``errors="surrogatepass"``).
+
+    A ``str`` may hold half of a surrogate pair (``json.loads`` of an escaped emoji cut by truncation gives one),
+    and strict UTF-8 raises on it. For text without one these are exactly the strict UTF-8 bytes, so every digest
+    and ref of valid text is what it was. The encoding stays one-to-one, which ``errors="replace"`` would not:
+    two texts that differ only in a lone surrogate keep different bytes, so different digests and refs."""
+    return text.encode("utf-8", "surrogatepass")
+
+
 # Values no one can change in place: a copy shares them without looking further.
 _UNCHANGEABLE = frozenset({str, int, float, bool, type(None), bytes, complex})
 _CONTAINERS = (dict, list, tuple, set)

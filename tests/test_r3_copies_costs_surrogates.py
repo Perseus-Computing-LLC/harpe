@@ -5,17 +5,24 @@
   longer raises, and nothing written into a copy's ``metadata``, at any depth, reaches the item it was made from.
 * An item whose content a ``pre_prune`` hook rewrote is costed as rewritten, so the budget holds for what the report
   includes and ``consumed_tokens`` is the count of that text; a count a hook or the caller set on purpose is kept.
+* Text holding a lone surrogate hashes instead of raising (DTOC ref and size, ``pinned_policy_digest``,
+  ``dropped_ids_sha256``), and every digest and ref of valid text is the strict UTF-8 one it always was.
 """
 from __future__ import annotations
 
 import collections
+import hashlib
+import json
 import threading
 from typing import Any, Dict, List, Sequence
 
 import pytest
 
 from harpe import ContextBudgetEngine, ContextItem, PrunePolicy, SynthesisReport, TokenBudget, TwoPassBuild
+from harpe.dtoc import DynamicToolCompressor
+from harpe.engine import pinned_policy_digest
 from harpe.models import _detached_copy
+from harpe.two_pass import dropped_ids_sha256
 
 
 class _Handle:
@@ -447,3 +454,86 @@ def test_an_item_a_hook_rewrote_and_marked_confidential_is_withheld_at_its_new_c
     assert [it.id for it in report.withheld_items] == ["i2"]
     assert report.withheld_items[0].token_count == _actual(engine, report.withheld_items) > 100
     assert len(report.included_items) == 4 and report.consumed_tokens == _actual(engine, report.included_items)
+
+
+# ---- lone surrogates in hashed text --------------------------------------------------------------------------------
+
+HIGH_HALF = json.loads('"status: done \\ud83d"')  # "\ud83d\ude00" cut after its first escape
+LOW_HALF = json.loads('"status: done \\ude00"')
+VALID_TEXTS = ["plain ascii", "caf\u00e9 \u6f22\u5b57", "whole emoji \U0001F600", "a:b\\c\nd", "\uffff\x00 edge"]
+
+
+def _body(tail: str) -> str:
+    return ("row of output\n" * 200) + tail
+
+
+@pytest.mark.parametrize("tail", [HIGH_HALF, LOW_HALF, HIGH_HALF + " and more", "\ud83d" * 3])
+def test_tool_output_with_a_lone_surrogate_compresses_restores_and_parses(tail):
+    output = _body(tail)
+    comp = DynamicToolCompressor(min_compress_chars=100)
+    placeholder, artifact = comp.maybe_compress("terminal", output)
+    assert artifact is not None and comp.restore(artifact.ref_id) == output
+    assert DynamicToolCompressor.parse_placeholder(placeholder)["ref"] == artifact.ref_id
+    # The same output gets the same ref again, and the size counts three bytes for the half pair.
+    assert comp.maybe_compress("terminal", output)[1].ref_id == artifact.ref_id
+    assert artifact.raw_byte_size == len(output.encode("utf-8", "surrogatepass"))
+
+
+def test_outputs_that_differ_only_in_a_lone_surrogate_get_different_refs_and_digests():
+    comp = DynamicToolCompressor(min_compress_chars=100)
+    high, low = comp.maybe_compress("t", _body(HIGH_HALF))[1], comp.maybe_compress("t", _body(LOW_HALF))[1]
+    marked = comp.maybe_compress("t", _body("status: done \ufffd"))[1]  # what errors="replace" would hash both as
+    assert len({high.ref_id, low.ref_id, marked.ref_id}) == 3
+    assert comp.restore(high.ref_id) == _body(HIGH_HALF) and comp.restore(low.ref_id) == _body(LOW_HALF)
+
+    def pinned(content: str) -> str:
+        return pinned_policy_digest([ContextItem(id="a", content=content, pinned=True)])
+
+    assert len({pinned(HIGH_HALF), pinned(LOW_HALF), pinned("status: done \ufffd")}) == 3
+    assert len({dropped_ids_sha256(["\ud83d"]), dropped_ids_sha256(["\ude00"]), dropped_ids_sha256(["\ufffd"])}) == 3
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+@pytest.mark.parametrize("field", ["content", "id", "dimension"])  # the fields of the digest that accept one
+def test_synthesize_accepts_a_lone_surrogate_pinned_as_unpinned(pinned, field):
+    values = {"id": "a", "content": "alpha", "dimension": "invariant"}
+    values[field] = values[field] + "\ud83d"
+    report = ContextBudgetEngine().synthesize([ContextItem(pinned=pinned, **values)], TokenBudget(total_budget=1000))
+    assert [it.id for it in report.included_items] == [values["id"]]
+    if pinned:
+        assert len(report.pinned_policy_digest) == 64
+        assert report.pinned_policy_digest == pinned_policy_digest(report.included_items)
+
+
+def test_dropped_ids_with_a_lone_surrogate_hash_and_a_build_reports_them():
+    assert len(dropped_ids_sha256(["ok", "half \ud83d"])) == 64
+    assert dropped_ids_sha256(["half \ud83d", "ok"]) == dropped_ids_sha256(["ok", "half \ud83d"])
+    items = [ContextItem(id="half \ud83d", content="too large to fit", token_count=5000),
+             ContextItem(id="rule", content="always answer in English", token_count=6, pinned=True)]
+    report = ContextBudgetEngine().synthesize(items, TokenBudget(total_budget=1000))
+    assert [it.id for it in report.pruned_items] == ["half \ud83d"]
+    build = TwoPassBuild(report, budget_tokens=500, bodies={})
+    assert build.dropped_ids == ("half \ud83d",)
+    assert build.receipt_payload()["dropped_ids_sha256"] == dropped_ids_sha256(["half \ud83d"])
+
+
+@pytest.mark.parametrize("text", VALID_TEXTS)
+def test_valid_text_keeps_the_strict_utf8_digests_and_refs(text):
+    """Old sidecars, placeholders and receipts name these values: for text strict UTF-8 can encode, nothing moves."""
+    output = _body(text)
+    artifact = DynamicToolCompressor(min_compress_chars=100).maybe_compress("terminal", output)[1]
+    strict = hashlib.sha256(f"terminal:{output}".encode("utf-8")).hexdigest()
+    assert artifact.ref_id.startswith("dtoc_") and strict.startswith(artifact.ref_id[len("dtoc_"):])
+    assert len(artifact.ref_id) > len("dtoc_") + 16 and artifact.raw_byte_size == len(output.encode("utf-8"))
+    assert dropped_ids_sha256(["b", text + "x"]) == hashlib.sha256(
+        "\n".join(sorted(["b", (text + "x").replace("\\", "\\\\").replace("\n", "\\n")])).encode("utf-8")).hexdigest()
+
+
+def test_known_digests_of_valid_text_are_unchanged():
+    """Values taken from the pull request head (1451dc4) before any lone-surrogate change."""
+    assert dropped_ids_sha256([]) == hashlib.sha256(b"").hexdigest()
+    assert dropped_ids_sha256(["b", "a"]) == hashlib.sha256(b"a\nb").hexdigest()
+    assert pinned_policy_digest([]) == "empty_policy"
+    plain = [ContextItem(id="rule", content="always answer in English \U0001F600", role="system", pinned=True)]
+    assert pinned_policy_digest(plain) == hashlib.sha256(
+        "system:None:rule:always answer in English \U0001F600\n".encode("utf-8")).hexdigest()

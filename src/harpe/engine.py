@@ -8,7 +8,9 @@ import re
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from . import _native
-from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget, _detached_copy
+from .models import (
+    CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget, _detached_copy, _utf8,
+)
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .routing import (
     QueryIntent,
@@ -106,7 +108,7 @@ def pinned_policy_digest(pinned_items: Sequence[ContextItem]) -> str:
         entries.append((key, record))  # ties on the key are broken by the record itself
     policy_hasher = hashlib.sha256()
     for _, record in sorted(entries):
-        policy_hasher.update(record.encode("utf-8"))
+        policy_hasher.update(_utf8(record))  # any str hashes: a lone surrogate does not raise
     return policy_hasher.hexdigest()
 
 

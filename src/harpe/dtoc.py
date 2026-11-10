@@ -16,6 +16,7 @@ from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote, unquote
 from pydantic import BaseModel, Field
+from .models import _utf8
 
 DEFAULT_STORE_MAX_BYTES = 64 * 1024 * 1024
 
@@ -262,7 +263,9 @@ class DynamicToolCompressor:
 
         lines = output.splitlines()
         raw_lines = len(lines)
-        raw_size = len(output.encode("utf-8"))
+        # Tool output cut in the middle of an escaped emoji holds a lone surrogate: _utf8 sizes and hashes it
+        # instead of raising, and gives valid text the size and the ref it always had.
+        raw_size = len(_utf8(output))
 
         # Resolve typed sidecar flags from arguments and metadata
         meta = dict(metadata or {})
@@ -275,7 +278,7 @@ class DynamicToolCompressor:
         # backslash and a colon are escaped, so the colon after it always ends it: tool "a:b" with output "c" and
         # tool "a" with output "b:c" hash different text. A name without either character hashes as before.
         safe_tool = str(tool_name).replace("\\", "\\\\").replace(":", "\\:")
-        h = hashlib.sha256(f"{safe_tool}:{output}".encode("utf-8")).hexdigest()[:_REF_HEX_DIGITS]
+        h = hashlib.sha256(_utf8(f"{safe_tool}:{output}")).hexdigest()[:_REF_HEX_DIGITS]
         ref_id = f"dtoc_{h}"
         # The same tool and output always get the same ref, and storing them again only refreshes the artifact.
         # A ref already holding another tool's or another output is never replaced: restore() of that ref must keep
