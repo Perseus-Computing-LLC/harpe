@@ -41,9 +41,13 @@ class HeuristicTokenCounter:
     def count_tokens(self, text: str) -> int:
         if not text:
             return 0
-        pieces = len(self._PIECE_RE.findall(text))
-        pieces += sum(len(run) // 3 for run in self._HEX_RUN_RE.findall(text))
-        return max(pieces, (len(text) + 3) // 4)
+        # A hex run is made of ASCII letters and digits, so it lies inside one piece, and a piece under 8
+        # characters cannot hold one: looking for runs in the long pieces alone finds exactly the runs a second
+        # pass over the whole text would, without reading the text twice.
+        pieces = self._PIECE_RE.findall(text)
+        hex_runs = self._HEX_RUN_RE.findall
+        extras = sum(len(run) // 3 for piece in pieces if len(piece) >= 8 for run in hex_runs(piece))
+        return max(len(pieces) + extras, (len(text) + 3) // 4)
 
 
 class BudgetOverflowError(ValueError):
