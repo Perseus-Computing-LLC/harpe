@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changing the context the receipt describes. The build keeps its own copies of the items it is given and hands
   out copies from `items()`. A report that repeats an id across its included, pruned and withheld items raises
   `ValueError`: a repeated row used to be handed out twice by `items()` but counted once in the receipt.
-- Hooks on copies: with hooks set, `synthesize` copies items deeply before the `pre_prune` hooks, so a hook that
+- Hooks on copies: with hooks set, `synthesize` copies items before the `pre_prune` hooks, so a hook that
   writes into an item's `metadata` (a per-query score, say) no longer writes into the caller's item and every
   later call over it; the withheld items a `post_prune` hook is handed are copies too. Ids are checked again
   after the `pre_prune` hooks: an item a hook adds or renames under an id already present (one a replayed report
@@ -55,6 +55,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in, and otherwise the strongest soft rule applies. `BehavioralGovernor` treats a history directive's
   `epistemic_state` as revoked in any letter case, as it already did for invariants. `ProfileLedger.add` without
   `order` places turns by arrival, so the first statement stays the established record and the latest is current.
+- What a copy owns: the copies `synthesize` gives its hooks and the copies `TwoPassBuild` keeps and hands out
+  rebuild every dict, list, tuple and set inside `metadata` and share any other object held there. They are no
+  longer deep copies, which raised `TypeError` on metadata holding an object that cannot be copied (a lock, a
+  client, an open handle) as soon as a hook was registered or a two-pass build was made. A write into a copy's
+  `metadata`, at any depth, still does not reach the item it was copied from; a change to the state of an object
+  held in `metadata` does, as it does without hooks. One no-op hook over 10,000 counted items costs about half of
+  what the deep copies did (188 to 96 ms), a third with an embedding in each item's metadata (973 to 329 ms).
+- Cost after a hook's rewrite: an item whose content a `pre_prune` hook rewrote and whose `token_count` the hook
+  left alone is counted again before selection, so unpinned items are added only while they fit and
+  `consumed_tokens` is the count of the text the report includes, not of the text before the hooks. A count a
+  hook sets together with its rewrite is kept, as is the count of an item no hook rewrote.
+- Lone surrogates: text holding half of a surrogate pair (`json.loads` of an escaped emoji cut by truncation)
+  no longer raises `UnicodeEncodeError` from `DynamicToolCompressor.maybe_compress`, from `synthesize` when the
+  item is pinned, or from `dropped_ids_sha256`. Refs, byte sizes and digests are taken over UTF-8 with
+  `surrogatepass`; for text without a lone surrogate they are unchanged, so placeholders, sidecars and receipts
+  written before still match.
+
+### Changed
+
+- `HeuristicTokenCounter.count_tokens` looks for hex runs inside the pieces of 8 or more characters instead of in
+  a second pass over the text: the same count for every text, about 20% less time (352 to 274 ms over 10,000
+  items, 11.7 M characters).
+- The greedy fallback of `PrunePolicy.KNAPSACK_DP` (above `max_cells`) sorts item indexes on one list of floats
+  instead of on a tuple per item: the same selection, about 30% less time in the solve at 10,000 items (7.1 to
+  4.9 ms).
 
 ## [0.1.0-alpha.12] - 2026-11-03
 

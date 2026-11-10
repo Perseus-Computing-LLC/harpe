@@ -586,10 +586,12 @@ class ContextBudgetEngine(ContextSynthesizer):
         """``destination``: "remote" (default) withholds every item marked confidential, pinned or not, before any
         budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything. The check is
         made again after the ``pre_prune`` hooks, on the items they leave: an item a hook marks confidential is
-        withheld as well (listed after the items marked up front), and an item a hook left without a token count
-        is counted again, so selection only sees what was checked. Ids must be unique there too: an item a hook
-        adds under an id already present (one a replayed report carries, say) raises ``ValueError``, as a
-        duplicate in ``items`` does. Hooks work on deep copies, so what they write never reaches ``items``.
+        withheld as well (listed after the items marked up front), and an item a hook left without a token count,
+        or whose content it rewrote without setting a new count, is counted again, so selection only sees what
+        was checked. Ids must be unique there too: an item a hook adds under an id already present (one a replayed
+        report carries, say) raises ``ValueError``, as a duplicate in ``items`` does. Hooks work on copies that
+        own their fields and the dicts, lists, tuples and sets inside ``metadata``, so what they write never
+        reaches ``items``; any other object held in ``metadata`` (a client, a lock) is shared, not cloned.
         ``prune_policy``: alias for ``policy`` for ergonomics across benchmarks. An unknown policy raises
         ``ValueError``.
         ``query``: optional prompt/question string for automatic intent detection.
