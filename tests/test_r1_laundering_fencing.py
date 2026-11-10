@@ -226,7 +226,7 @@ def test_dtoc_ref_keeps_its_value_for_an_ordinary_tool_name():
     output = "line\n" * 20
     _, artifact = comp.maybe_compress("terminal", output)
     assert artifact is not None
-    assert artifact.ref_id == "dtoc_" + hashlib.sha256(f"terminal:{output}".encode()).hexdigest()[:12]
+    assert artifact.ref_id == "dtoc_" + hashlib.sha256(f"terminal:{output}".encode()).hexdigest()[:32]
 
 
 def test_a_dtoc_item_is_confidential_whenever_its_placeholder_says_so():

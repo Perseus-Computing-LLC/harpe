@@ -21,14 +21,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   confidential item or a confidential body or description, so Pass 2 cannot send what Pass 1 withheld.
 - Two-pass receipts: `emit()` seals the build, so `request()` after the receipt raises `RuntimeError` instead of
   changing the context the receipt describes. The build keeps its own copies of the items it is given and hands
-  out copies from `items()`.
+  out copies from `items()`. A report that repeats an id across its included, pruned and withheld items raises
+  `ValueError`: a repeated row used to be handed out twice by `items()` but counted once in the receipt.
+- Hooks on copies: with hooks set, `synthesize` copies items deeply before the `pre_prune` hooks, so a hook that
+  writes into an item's `metadata` (a per-query score, say) no longer writes into the caller's item and every
+  later call over it; the withheld items a `post_prune` hook is handed are copies too. Ids are checked again
+  after the `pre_prune` hooks: an item a hook adds or renames under an id already present (one a replayed report
+  carries, or a withheld item's) raises `ValueError`, as a duplicate in `items` does.
 - Digests and handles: `pinned_policy_digest` escapes `\`, `:` and newlines in each field and hashes an enum
   dimension as its value, so different pinned sets cannot share a digest and a digest recomputed from serialized
-  items matches. `dropped_ids_sha256` escapes `\` and newlines in ids, and DTOC reference ids escape `\` and `:`
-  in the tool name, so two different artifacts cannot share a ref and overwrite each other's stored output.
-  Values are unchanged for input without those characters and with absent or plain-string dimensions; a pinned
-  set with an enum dimension now has the digest of its serialized form, and a dimension that is the string
-  `"None"` is no longer hashed like an absent one.
+  items matches. `dropped_ids_sha256` escapes `\` and newlines in ids, and the text a DTOC reference id hashes
+  escapes `\` and `:` in the tool name, so a tool name and its output cannot run together into another
+  artifact's text. Digests are unchanged for input without those characters and with absent or plain-string
+  dimensions; a pinned set with an enum dimension now has the digest of its serialized form, and a dimension
+  that is the string `"None"` is no longer hashed like an absent one.
+- DTOC refs: a reference id is the first 128 bits of that sha256 (`dtoc_` and 32 hex digits), not 48 bits, which
+  a birthday search of about 2^24 hashes could collide, and `maybe_compress` raises `ValueError` rather than
+  store a different tool output under a ref its store already holds, so `restore()` keeps returning the output
+  a placeholder summarized. The same tool and output compressed again still refresh their own ref. Consumers
+  that match a ref by its length must accept the longer form.
+- DTOC placeholders: when a ref, tool name, scope or exit code holds whitespace, `]`, `%` or another non-printing
+  character, the header carries `enc=pct` right after the ref and percent-encodes every value, so
+  `parse_placeholder` reads back the artifact's own ref, tool, scope and flags, not a header such text ended
+  early or extended with tokens of its own. Other headers are written as before, and placeholders written by
+  earlier releases still parse, except that a `ref`, `tool` or `scope` spelled `true` or `false` is now read as
+  that text, not as a bool. The last line now reads `[Use ref='...' to expand if needed]`.
 - Typed fields over free metadata: `DynamicToolCompressor.to_context_item` writes `ref_id`, `tool_name`, `scope`,
   `exit_code`, `partial` (and `confidential`, when present) over the caller's metadata, matching the placeholder,
   and marks the item confidential whenever its placeholder does. `OpenLoopTracker.to_context_items` writes each
