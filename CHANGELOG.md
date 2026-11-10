@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.13] - 2026-11-10
+
 ### Fixed
 
 - Fencing and compiled graphs: `CompiledGraph.invoke` enforces `lease_fencing_token`. A run is admitted only with a
