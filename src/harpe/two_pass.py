@@ -119,7 +119,9 @@ class TwoPassBuild:
 
     ``destination`` is the one Pass 1 was synthesized for (default ``"remote"``, as in ``synthesize``). For
     ``"remote"`` the report must include no confidential item and no description or body may be confidential:
-    either raises ``ValueError``, so Pass 2 cannot send what Pass 1 withheld.
+    either raises ``ValueError``, so Pass 2 cannot send what Pass 1 withheld. A report that repeats an id, across
+    its included, pruned and withheld items, raises ``ValueError`` too: rows are keyed by id, and a repeat would
+    hand out a context the receipt does not describe.
     """
 
     def __init__(
@@ -146,6 +148,12 @@ class TwoPassBuild:
 
         rows_are_bodies = descriptions is not None
         given: Mapping[str, ContextItem] = descriptions if rows_are_bodies else bodies  # type: ignore[assignment]
+        # Rows, tier-0 items and dropped ids are all keyed by id, so an id the report repeats would be handed out
+        # twice but counted once, or named as dropped while it is in the context: the receipt would describe
+        # another context than items(). Refuse the report rather than pick one occurrence.
+        ContextBudgetEngine._refuse_duplicate_ids(
+            [*report.included_items, *report.pruned_items, *report.withheld_items], " in the report"
+        )
         self._order: List[Tuple[str, bool]] = []  # (id, is_tier0) in the report's included order
         self._tier0: Dict[str, ContextItem] = {}
         self._desc: Dict[str, ContextItem] = {}

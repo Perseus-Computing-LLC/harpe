@@ -357,21 +357,28 @@ class ContextBudgetEngine(ContextSynthesizer):
         # Ids come straight from the caller and are only unique by convention. Selection is tracked by object
         # identity, so duplicates cannot smuggle a pruned item back in, but a report keyed by id would still be
         # ambiguous for the caller. Refuse them rather than guess.
+        self._refuse_duplicate_ids(items_list, "")
+        return items_list
+
+    @staticmethod
+    def _refuse_duplicate_ids(items_list: Sequence[ContextItem], where: str) -> None:
         ids = [it.id for it in items_list]
         if len(set(ids)) != len(ids):
             dupes = sorted({i for i in ids if ids.count(i) > 1})
-            raise ValueError(f"duplicate ContextItem ids: {dupes}")
-        return items_list
+            raise ValueError(f"duplicate ContextItem ids{where}: {dupes}")
 
     def _count_uncounted(self, items_list: List[ContextItem]) -> List[ContextItem]:
         """Only items without a count are counted and copied. Hooks may change items in place, so with hooks
-        every item is copied."""
+        every item is copied deeply: ``model_copy`` alone is shallow, the copy's ``metadata`` would be the
+        caller's own dict, and a hook's write into it (a per-query score, say) would reach the caller's item and
+        every later call over it."""
+        deep = bool(self.hooks)
         resolved: List[ContextItem] = []
         for it in items_list:
             if it.token_count <= 0:
-                it = it.model_copy(update={"token_count": self.token_counter.count_tokens(it.content)})
-            elif self.hooks:
-                it = it.model_copy()
+                it = it.model_copy(update={"token_count": self.token_counter.count_tokens(it.content)}, deep=deep)
+            elif deep:
+                it = it.model_copy(deep=True)
             resolved.append(it)
         return resolved
 
@@ -530,7 +537,9 @@ class ContextBudgetEngine(ContextSynthesizer):
         budgeting, so it cannot take a budget slot or appear in the output. "local" keeps everything. The check is
         made again after the ``pre_prune`` hooks, on the items they leave: an item a hook marks confidential is
         withheld as well (listed after the items marked up front), and an item a hook left without a token count
-        is counted again, so selection only sees what was checked.
+        is counted again, so selection only sees what was checked. Ids must be unique there too: an item a hook
+        adds under an id already present (one a replayed report carries, say) raises ``ValueError``, as a
+        duplicate in ``items`` does. Hooks work on deep copies, so what they write never reaches ``items``.
         ``prune_policy``: alias for ``policy`` for ergonomics across benchmarks. An unknown policy raises
         ``ValueError``.
         ``query``: optional prompt/question string for automatic intent detection.
@@ -566,13 +575,17 @@ class ContextBudgetEngine(ContextSynthesizer):
             items_list = [it for it in items_list if not self._withheld_from_remote(it)]
         resolved_items = self._count_uncounted(items_list)
         if self.hooks:
+            # A post_prune hook is handed the report, withheld items included, so those are copies as well.
+            withheld = [it.model_copy(deep=True) for it in withheld]
             for hook in self.hooks:
                 hook.pre_prune(resolved_items)
-            # Hooks work on copies and may reclassify or rewrite them: what is withheld and what each item costs is
-            # decided again on the items they left, so the items selected are the items checked.
+            # Hooks work on copies and may reclassify, rewrite or add to them: what is withheld, that each id is
+            # unique and what each item costs are decided again on the items they left, so the items selected are
+            # the items checked.
             if destination == "remote":
                 withheld.extend(it for it in resolved_items if self._withheld_from_remote(it))
                 resolved_items = [it for it in resolved_items if not self._withheld_from_remote(it)]
+            self._refuse_duplicate_ids(withheld + resolved_items, " after the pre_prune hooks")
             resolved_items = self._count_uncounted(resolved_items)
 
         # Recency is measured from the newest item, not from the wall clock, so a replay scores identically.
