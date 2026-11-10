@@ -8,7 +8,7 @@ import re
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from . import _native
-from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget
+from .models import CognitiveDimension, ContextItem, PrunePolicy, SynthesisReport, TokenBudget, _detached_copy
 from .protocols import ContextSynthesizer, PruningHook, TokenCounter
 from .routing import (
     QueryIntent,
@@ -369,18 +369,22 @@ class ContextBudgetEngine(ContextSynthesizer):
 
     def _count_uncounted(self, items_list: List[ContextItem]) -> List[ContextItem]:
         """Only items without a count are counted and copied. Hooks may change items in place, so with hooks
-        every item is copied deeply: ``model_copy`` alone is shallow, the copy's ``metadata`` would be the
-        caller's own dict, and a hook's write into it (a per-query score, say) would reach the caller's item and
-        every later call over it."""
-        deep = bool(self.hooks)
-        resolved: List[ContextItem] = []
-        for it in items_list:
-            if it.token_count <= 0:
-                it = it.model_copy(update={"token_count": self.token_counter.count_tokens(it.content)}, deep=deep)
-            elif deep:
-                it = it.model_copy(deep=True)
-            resolved.append(it)
-        return resolved
+        every item is copied, and the copy owns its ``metadata``: ``model_copy`` alone is shallow, the copy's
+        ``metadata`` would be the caller's own dict, and a hook's write into it (a per-query score, say) would
+        reach the caller's item and every later call over it. The copy is :func:`harpe.models._detached_copy`,
+        not ``model_copy(deep=True)``: it rebuilds the dicts, lists, tuples and sets inside ``metadata`` and
+        shares every other object there, so a lock, a client or an open handle in ``metadata`` is accepted with
+        hooks as it is without them."""
+        count_tokens = self.token_counter.count_tokens
+        if self.hooks:
+            return [
+                _detached_copy(it, {"token_count": count_tokens(it.content)} if it.token_count <= 0 else None)
+                for it in items_list
+            ]
+        return [
+            it.model_copy(update={"token_count": count_tokens(it.content)}) if it.token_count <= 0 else it
+            for it in items_list
+        ]
 
     @staticmethod
     def _take_in_order(ordered: Sequence[ContextItem], capacity: int) -> Tuple[List[ContextItem], List[ContextItem]]:
@@ -576,7 +580,7 @@ class ContextBudgetEngine(ContextSynthesizer):
         resolved_items = self._count_uncounted(items_list)
         if self.hooks:
             # A post_prune hook is handed the report, withheld items included, so those are copies as well.
-            withheld = [it.model_copy(deep=True) for it in withheld]
+            withheld = [_detached_copy(it) for it in withheld]
             for hook in self.hooks:
                 hook.pre_prune(resolved_items)
             # Hooks work on copies and may reclassify, rewrite or add to them: what is withheld, that each id is

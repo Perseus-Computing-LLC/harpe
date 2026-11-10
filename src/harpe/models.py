@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import secrets
 import time
 import uuid
@@ -125,6 +126,111 @@ class ContextItem(BaseModel):
             elif cur_id and not item_id:
                 data["item_id"] = str(cur_id)
         return data
+
+
+# Values no one can change in place: a copy shares them without looking further.
+_UNCHANGEABLE = frozenset({str, int, float, bool, type(None), bytes, complex})
+_CONTAINERS = (dict, list, tuple, set)
+
+
+def _own_containers(value: Any, memo: Dict[int, Any]) -> Any:
+    """``value`` with every ``dict``, ``list``, ``tuple`` and ``set`` in it (subclasses too) built again, down to
+    any depth, and every other object shared as it is: a lock, a client, an open handle or an array is never
+    cloned, so nothing here can fail on an object that cannot be copied. Writing into the result (a new key, an
+    appended element) therefore never reaches ``value``; changing the state of a shared object does.
+
+    ``memo`` maps ``id(original)`` to its copy, as in ``copy.deepcopy``: a container reachable twice is copied
+    once and a container that holds itself ends. A tuple with nothing to rebuild inside is returned as it is."""
+    cls = type(value)
+    if cls in _UNCHANGEABLE or not isinstance(value, _CONTAINERS):
+        return value
+    key = id(value)
+    if key in memo:
+        return memo[key]
+    if cls is dict:
+        new_dict: Dict[Any, Any] = {}
+        memo[key] = new_dict
+        for k, v in value.items():
+            new_dict[k] = v if type(v) in _UNCHANGEABLE else _own_containers(v, memo)
+        return new_dict
+    if cls is list:
+        if _UNCHANGEABLE.issuperset(map(type, value)):
+            memo[key] = flat = value.copy()  # an embedding, a list of tags: nothing below to own
+            return flat
+        new_list: List[Any] = []
+        memo[key] = new_list
+        new_list.extend(v if type(v) in _UNCHANGEABLE else _own_containers(v, memo) for v in value)
+        return new_list
+    if cls is set:
+        memo[key] = new_set = set(value)  # members are hashable: shared
+        return new_set
+    if isinstance(value, tuple):
+        if _UNCHANGEABLE.issuperset(map(type, value)):
+            return value
+        parts = [_own_containers(v, memo) for v in value]
+        if key in memo:  # a list inside holds this tuple: it was rebuilt on the way down
+            return memo[key]
+        if all(new is old for new, old in zip(parts, value)):
+            rebuilt = value
+        else:
+            try:
+                rebuilt = tuple(parts) if cls is tuple else (cls(*parts) if hasattr(cls, "_fields") else cls(parts))
+            except Exception:
+                rebuilt = value  # a tuple subclass with a constructor of its own: left as one shared object
+        memo[key] = rebuilt
+        return rebuilt
+    # A subclass of dict, list or set (OrderedDict, defaultdict, ...): a shallow copy keeps its type and whatever
+    # else it carries, then the copy's elements are owned in place. A subclass that cannot be copied is shared
+    # like any other object, and one that refuses the writes keeps the elements it has: this never raises.
+    try:
+        clone = copy.copy(value)
+    except Exception:
+        return value
+    if clone is value or type(clone) is not cls:
+        return value
+    memo[key] = clone
+    try:
+        if isinstance(clone, dict):
+            for k, v in list(clone.items()):
+                owned = _own_containers(v, memo)
+                if owned is not v:
+                    clone[k] = owned
+        elif isinstance(clone, list):
+            for i, v in enumerate(list(clone)):
+                owned = _own_containers(v, memo)
+                if owned is not v:
+                    clone[i] = owned
+    except RecursionError:
+        raise
+    except Exception:
+        pass
+    return clone
+
+
+def _detached_copy(item: ContextItem, update: Optional[Dict[str, Any]] = None) -> ContextItem:
+    """A copy of ``item`` (with ``update`` applied) that shares no container with it: every field is the copy's
+    own and ``metadata`` is rebuilt by :func:`_own_containers`, so a write into the copy's ``metadata``, at any
+    depth, does not reach ``item`` and the other way round. Objects inside ``metadata`` that are not dicts,
+    lists, tuples or sets are shared, never cloned: unlike ``model_copy(deep=True)`` this cannot raise on
+    metadata that holds a lock, a client or an open handle, and it does not duplicate large payloads.
+
+    The fields a selection, a withholding decision or a receipt reads (id, role, content, token_count, priority,
+    pinned, created_at, dimension, sensitivity) are immutable values, so the copy cannot change under its owner
+    through ``item``."""
+    clone = item.model_copy(update=update)
+    fields = clone.__dict__  # written directly, as model_copy does, so the set of explicitly set fields is kept
+    if type(item) is ContextItem:
+        fields["metadata"] = _own_containers(fields["metadata"], {})
+        return clone
+    # A subclass may add container fields (or extras) of its own: own those as well.
+    memo: Dict[int, Any] = {}
+    for name, value in list(fields.items()):
+        fields[name] = _own_containers(value, memo)
+    extra = clone.__pydantic_extra__
+    if extra:
+        for name, value in list(extra.items()):
+            extra[name] = _own_containers(value, memo)
+    return clone
 
 
 class MixedRoleRenderError(ValueError):
