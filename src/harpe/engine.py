@@ -305,14 +305,24 @@ class ContextBudgetEngine(ContextSynthesizer):
         else:
             solver = "greedy"
             # Dantzig density order, then fill whatever slack is left in plain utility order: density alone
-            # can skip a small high-utility item that would still have fit.
-            order = sorted(range(n), key=lambda i: (-utilities[i] / weights[i], i))
+            # can skip a small high-utility item that would still have fit. Ties go to the earlier item.
+            # Both orders are stable sorts of the indexes on one list of floats built once: the order the keys
+            # ``(-utilities[i] / weights[i], i)`` and ``(-utilities[i], i)`` give, without building and comparing
+            # n tuples. A NaN utility compares as neither smaller nor larger, so with one the two forms could
+            # part ways: then (the sum is not finite) the tuple keys are used as before.
+            density = [-utilities[i] / weights[i] for i in range(n)]
+            if math.isfinite(sum(density)):
+                by_density = sorted(range(n), key=density.__getitem__)
+                by_utility = sorted(range(n), key=[-utilities[i] for i in range(n)].__getitem__)
+            else:
+                by_density = sorted(range(n), key=lambda i: (density[i], i))
+                by_utility = sorted(range(n), key=lambda i: (-utilities[i], i))
             take, used = set(), 0
-            for i in order:
+            for i in by_density:
                 if used + weights[i] <= capacity:
                     take.add(i)
                     used += weights[i]
-            for i in sorted(range(n), key=lambda i: (-utilities[i], i)):
+            for i in by_utility:
                 if i not in take and used + weights[i] <= capacity:
                     take.add(i)
                     used += weights[i]
