@@ -11,9 +11,26 @@ Provides:
 from __future__ import annotations
 
 import math
+import operator
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
+
+
+def _token_count(name: str, value: Any) -> int:
+    """``value`` as a token count: an integer >= 0, checked before a simulator changes any state.
+
+    A negative count would slice or size from the wrong end (``free_blocks[:-1]`` is every block but one), so it
+    is refused instead of being acted on."""
+    if isinstance(value, bool):
+        raise TypeError(f"{name} must be an int, not bool")
+    try:
+        count = operator.index(value)
+    except TypeError:
+        raise TypeError(f"{name} must be an int, not {type(value).__name__}") from None
+    if count < 0:
+        raise ValueError(f"{name} must be >= 0, not {count}")
+    return count
 
 
 class PrecisionFormat(str, Enum):
@@ -190,14 +207,16 @@ class PagedKVCacheManager:
 
     def can_admit_sequence(self, num_tokens: int) -> bool:
         """Check if sufficient physical blocks exist to allocate the requested sequence length."""
-        needed_blocks = math.ceil(num_tokens / self.block_size_tokens)
+        needed_blocks = math.ceil(_token_count("num_tokens", num_tokens) / self.block_size_tokens)
         return len(self.free_blocks) >= needed_blocks
 
     def allocate_sequence(self, seq_id: str, prompt_tokens: int) -> List[int]:
-        """Allocate physical blocks for a new sequence."""
+        """Allocate physical blocks for a new sequence. A prompt length that is not an int >= 0 raises
+        ``ValueError`` (``TypeError`` for a non-int) and takes no block."""
         if seq_id in self.block_tables:
             raise ValueError(f"Sequence {seq_id} already exists in block table")
 
+        prompt_tokens = _token_count("prompt_tokens", prompt_tokens)
         needed_blocks = math.ceil(prompt_tokens / self.block_size_tokens)
         if len(self.free_blocks) < needed_blocks:
             raise MemoryError(
@@ -432,6 +451,7 @@ class DuoAttentionKVCacheManager:
 
     def allocate_sequence(self, seq_id: str, prompt_tokens: int) -> Dict[str, Any]:
         # Size first: a prompt length the sizing rejects leaves no half-registered sequence behind.
+        prompt_tokens = _token_count("prompt_tokens", prompt_tokens)
         sizing = self.compute_sequence_vram_bytes(prompt_tokens)
         self.sequences[seq_id] = {"prompt_tokens": prompt_tokens, "generated_tokens": 0}
         return sizing
@@ -439,9 +459,11 @@ class DuoAttentionKVCacheManager:
     def append_token(self, seq_id: str) -> Dict[str, Any]:
         if seq_id not in self.sequences:
             raise KeyError(f"Sequence {seq_id} not registered.")
-        self.sequences[seq_id]["generated_tokens"] += 1
-        total_len = self.sequences[seq_id]["prompt_tokens"] + self.sequences[seq_id]["generated_tokens"]
-        return self.compute_sequence_vram_bytes(total_len)
+        seq = self.sequences[seq_id]
+        # Size first, count after: an append whose sizing raises counts no token, so a retry counts it once.
+        sizing = self.compute_sequence_vram_bytes(seq["prompt_tokens"] + seq["generated_tokens"] + 1)
+        seq["generated_tokens"] += 1
+        return sizing
 
     def free_sequence(self, seq_id: str) -> None:
         self.sequences.pop(seq_id, None)

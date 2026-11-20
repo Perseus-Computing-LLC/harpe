@@ -15,16 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build stays sealed: a retried `emit()` and any later `request()` raise `RuntimeError`, so one build can no
   longer end up with two receipts or a context that differs from the receipt already on disk. `receipt_sequence`
   stays `None` in that case, and the new `sealed` property reports it; make a new build to write another
-  receipt. Refusals that write nothing (a bad ledger path or actor, `argus-ledger` missing) still leave the
-  build open.
+  receipt. Refusals that write nothing still leave the build open, and `emit()` now applies every check that
+  can fail before the first byte before it seals: an actor or payload the Argus ledger refuses (whitespace,
+  quotes or non-ASCII in the actor, an integer beyond ±(2^53 − 1), such as an outsized `budget_tokens`), a
+  ledger path that is a directory or another non-regular file, lies under a regular file, or cannot be created,
+  and `argus-ledger` missing. Previously such a refusal sealed the build with no receipt, and none could ever be
+  written for it. A failure inside the ledger append itself still seals the build.
 - All-or-nothing ingest: `ProfileLedger.add` reads the whole turn before it records anything, so a turn whose
   ingest raises no longer moves `latest_order`/`latest_date` or takes an arrival position.
   `StateLedger.add_units` (and `add`) build every claim before recording any, so a batch with a bad unit leaves
   the ledger unchanged and can be retried without indexing its first units twice.
 - Allocation order in the KV-cache simulators and the tool-output store: `PagedKVCacheManager.allocate_sequence`
   plans its blocks before taking any, `DuoAttentionKVCacheManager.allocate_sequence` sizes a sequence before
-  registering it, and `DynamicToolCompressor.maybe_compress` renders the placeholder before storing the artifact, so
-  a failure in those steps leaves no half-applied state.
+  registering it, `DuoAttentionKVCacheManager.append_token` sizes the new length before counting the token (a
+  failed append no longer counts it, so a retry counts it once), and `DynamicToolCompressor.maybe_compress`
+  renders the placeholder before storing the artifact, so a failure in those steps leaves no half-applied state.
+  Both simulators now refuse a token count that is not an int >= 0 (`ValueError`, `TypeError` for a non-int or
+  bool) before changing anything; a negative prompt length used to take every free block but one.
 
 ## [0.1.0-alpha.13] - 2026-11-10
 
