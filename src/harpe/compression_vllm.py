@@ -205,16 +205,20 @@ class PagedKVCacheManager:
                 f"but only {len(self.free_blocks)} free blocks available"
             )
 
-        allocated_ids: List[int] = []
+        # Plan every block before touching any, then commit: a failure mid-plan leaks no block.
+        plan: List[Tuple[int, int]] = []
         remaining_tokens = prompt_tokens
-        for _ in range(needed_blocks):
-            b_id = self.free_blocks.pop(0)
-            block = self.physical_blocks[b_id]
+        for b_id in self.free_blocks[:needed_blocks]:
             tokens_in_this_block = min(remaining_tokens, self.block_size_tokens)
+            plan.append((b_id, tokens_in_this_block))
+            remaining_tokens -= tokens_in_this_block
+
+        allocated_ids: List[int] = [b_id for b_id, _ in plan]
+        del self.free_blocks[:needed_blocks]
+        for b_id, tokens_in_this_block in plan:
+            block = self.physical_blocks[b_id]
             block.num_tokens_stored = tokens_in_this_block
             block.ref_count = 1
-            remaining_tokens -= tokens_in_this_block
-            allocated_ids.append(b_id)
 
         self.block_tables[seq_id] = allocated_ids
         return allocated_ids
@@ -427,8 +431,10 @@ class DuoAttentionKVCacheManager:
         }
 
     def allocate_sequence(self, seq_id: str, prompt_tokens: int) -> Dict[str, Any]:
+        # Size first: a prompt length the sizing rejects leaves no half-registered sequence behind.
+        sizing = self.compute_sequence_vram_bytes(prompt_tokens)
         self.sequences[seq_id] = {"prompt_tokens": prompt_tokens, "generated_tokens": 0}
-        return self.compute_sequence_vram_bytes(prompt_tokens)
+        return sizing
 
     def append_token(self, seq_id: str) -> Dict[str, Any]:
         if seq_id not in self.sequences:

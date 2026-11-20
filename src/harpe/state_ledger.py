@@ -121,9 +121,9 @@ class StateLedger:
     def __init__(self) -> None:
         self.claims: List[Claim] = []
 
-    def add(self, unit_id: str, text: str, date: str = "") -> int:
-        """Index one unit. Returns the number of claims recorded from it."""
-        before = len(self.claims)
+    def _claims(self, unit_id: str, text: str, date: str, seq: int) -> List[Claim]:
+        """The claims one unit yields, numbered from ``seq``. Builds them only: nothing is recorded here."""
+        out: List[Claim] = []
         for sentence in _user_sentences(text):
             sentence = sentence.strip()
             if not sentence:
@@ -132,13 +132,26 @@ class StateLedger:
             den = any(p.search(sentence) for p in DENY)
             if aff == den:  # neither, or both in one sentence: not a clean claim
                 continue
-            self.claims.append(Claim(unit_id=unit_id, date=date or "", polarity=1 if aff else -1, text=sentence,
-                                     words=content_words(sentence), seq=len(self.claims)))
-        return len(self.claims) - before
+            out.append(Claim(unit_id=unit_id, date=date or "", polarity=1 if aff else -1, text=sentence,
+                             words=content_words(sentence), seq=seq + len(out)))
+        return out
+
+    def add(self, unit_id: str, text: str, date: str = "") -> int:
+        """Index one unit. Returns the number of claims recorded from it. All or nothing: when the unit raises
+        (a ``date`` or ``text`` of the wrong type), no claim from it is recorded."""
+        claims = self._claims(unit_id, text, date, len(self.claims))
+        self.claims.extend(claims)
+        return len(claims)
 
     def add_units(self, units: Mapping[str, Tuple[str, str]]) -> int:
-        """``{unit_id: (text, date)}``. Returns total claims recorded."""
-        return sum(self.add(uid, text, date) for uid, (text, date) in units.items())
+        """``{unit_id: (text, date)}``. Returns total claims recorded. All or nothing: every unit's claims are
+        built before any is recorded, so a unit that raises leaves the ledger as it was and the batch can be
+        retried without indexing its first units twice."""
+        staged: List[Claim] = []
+        for uid, (text, date) in units.items():
+            staged.extend(self._claims(uid, text, date, len(self.claims) + len(staged)))
+        self.claims.extend(staged)
+        return len(staged)
 
     def _pairs(self, q: frozenset, since: Optional[str], until: Optional[str], min_shared: int) -> List[StatePair]:
         """Affirmation/denial pairs whose shared content words with ``q`` and with each other number at least

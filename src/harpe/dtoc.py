@@ -314,8 +314,9 @@ class DynamicToolCompressor:
             partial=is_partial,
             metadata=meta,
         )
+        placeholder = artifact.format_placeholder()  # render before storing: a failure here stores nothing
         self._store[ref_id] = artifact
-        return artifact.format_placeholder(), artifact
+        return placeholder, artifact
 
     def to_context_item(
         self,

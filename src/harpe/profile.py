@@ -652,7 +652,7 @@ class ProfileLedger:
                              for a in self.specs.values()}
         self._statements: Dict[str, List[ProfileStatement]] = {name: [] for name in self.specs}
         self._sorted = True
-        self._arrivals = 0  # add() calls so far: the position of a turn given without an order
+        self._arrivals = 0  # add() calls that returned so far: the position of a turn given without an order
         self.latest_order: Optional[Tuple] = None
         self.latest_date: Optional[str] = None
 
@@ -663,18 +663,34 @@ class ProfileLedger:
 
         ``order`` is the turn's position, compared as a tuple whose first element is the session, e.g.
         ``(session, turn)``. A turn given without one (the default) is placed by arrival: the n-th call to ``add``
-        gets ``(n,)``, so the timeline stays in the order the turns came in and each such turn is its own session.
+        that returns gets ``(n,)``, so the timeline stays in the order the turns came in and each such turn is its
+        own session.
         A sentence's index within its turn only orders the statements of that turn. Give every turn an order, or
         none: arrival positions are not comparable with orders a caller chose. Only a given order moves
-        ``latest_order``."""
+        ``latest_order``.
+
+        All or nothing: the turn is read in full before anything is recorded, so a turn whose ingest raises (a
+        ``text`` that is not a str, a custom ``AttributeSpec.value`` that fails) records no statement, does not
+        move ``latest_order``/``latest_date`` and takes no arrival position."""
         arrival = self._arrivals
-        self._arrivals += 1
-        if order and (self.latest_order is None or tuple(order) > self.latest_order):
-            self.latest_order, self.latest_date = tuple(order), date
-        if not order:
-            order = (arrival,)
-        if str(speaker).lower() != "user":
-            return []
+        given = tuple(order) if order else None
+        moves_latest = given is not None and (self.latest_order is None or given > self.latest_order)
+        position = given if given is not None else (arrival,)
+        found: List[ProfileStatement] = []
+        if str(speaker).lower() == "user":
+            found = self._read_turn(unit_id, text, date, position)
+        # Commit: nothing above changed the ledger, and nothing below can raise.
+        self._arrivals = arrival + 1
+        if moves_latest:
+            self.latest_order, self.latest_date = given, date
+        for statement in found:
+            self._statements[statement.attribute].append(statement)
+        if found:
+            self._sorted = False
+        return found
+
+    def _read_turn(self, unit_id: str, text: str, date: Optional[str], order: Tuple) -> List[ProfileStatement]:
+        """The statements one user turn makes, at position ``order``. Reads only: the ledger is not changed."""
         found: List[ProfileStatement] = []
         for si, sentence in enumerate(split_sentences(text)):
             first_person = bool(_FIRST_PERSON.search(sentence))
@@ -703,10 +719,6 @@ class ProfileLedger:
                 near = sentence[max(0, match.start() - 40):match.end() + 40]
                 found.append(ProfileStatement(name, sentence, unit_id, date, tuple(order) + (si,),
                                               bool(_PAST.search(near)), values))
-        for statement in found:
-            self._statements[statement.attribute].append(statement)
-        if found:
-            self._sorted = False
         return found
 
     def statements(self, attribute: str) -> List[ProfileStatement]:
