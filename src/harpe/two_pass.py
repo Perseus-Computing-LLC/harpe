@@ -24,8 +24,10 @@ that includes one, or a description or body marked confidential, is refused when
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
+import stat
 import threading
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
@@ -95,23 +97,86 @@ def _check_ledger_path(ledger_path: Any) -> str:
     return path
 
 
-def _prepared_context_built(payload: Mapping[str, Any], *, ledger_path: LedgerPath,
-                            actor: str) -> Callable[[], int]:
-    """Check everything that can be checked without touching the ledger, and return the one step that writes.
+# The gates Argus applies inside ``append`` before it opens the ledger (argus_ledger.canonical): an actor is
+# printable ASCII without whitespace, quotes or backslashes, at most 256 bytes; a payload int lies within
+# +/-(2**53 - 1). Applied here as well, so that a receipt Argus would refuse is refused before the build is sealed.
+_MAX_ACTOR_BYTES = 256
+_MAX_SAFE_INTEGER = 2 ** 53 - 1
 
-    Every refusal (payload, path, actor, a missing ``argus_ledger``) raises here, before any byte is written, so a
-    caller can tell a receipt that was never attempted from one whose write began."""
-    record = _check_payload(payload)
-    path = _check_ledger_path(ledger_path)
+
+def _check_actor(actor: Any) -> str:
     if not isinstance(actor, str) or not actor:
         raise ValueError("actor must be a non-empty str")
+    if (len(actor) > _MAX_ACTOR_BYTES or any(not ("\x21" <= ch <= "\x7e") for ch in actor)
+            or '"' in actor or "\\" in actor):
+        raise ValueError(f"actor {actor!r} must be printable ASCII without whitespace, quotes or backslashes "
+                         f"(1-{_MAX_ACTOR_BYTES} bytes), as the Argus ledger requires")
+    return actor
+
+
+def _check_payload_range(record: Mapping[str, Union[int, str]]) -> None:
+    for key, value in record.items():
+        if type(value) is int and abs(value) > _MAX_SAFE_INTEGER:
+            raise ValueError(f"harpe.context_built field {key!r} is {value}; the Argus ledger takes integers "
+                             f"within +/-{_MAX_SAFE_INTEGER}")
+
+
+def _probe_ledger_path(path: str) -> None:
+    """Refuse a ``path`` whose first ledger syscall would fail, without creating or writing anything.
+
+    The file is opened the way the Argus writer opens it (read-write, append, no create) and closed again. A path
+    that does not exist yet is accepted when its nearest existing ancestor is a directory this process can write
+    in, since Argus then creates the missing directories and the file. A directory, or any other file that is not a
+    regular file, cannot hold a receipt and is refused."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CLOEXEC)
+    except FileNotFoundError:
+        ancestor = os.path.dirname(os.path.abspath(path))
+        while not os.path.lexists(ancestor):
+            ancestor = os.path.dirname(ancestor)
+        if not os.path.isdir(ancestor):
+            raise NotADirectoryError(errno.ENOTDIR, "the ledger's nearest existing ancestor is not a directory",
+                                     ancestor) from None
+        if not os.access(ancestor, os.W_OK | os.X_OK):
+            raise PermissionError(errno.EACCES, "the ledger file cannot be created in", ancestor) from None
+        return
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "the ledger path is not a regular file", path)
+    finally:
+        os.close(fd)
+
+
+def _prepared_context_built(payload: Mapping[str, Any], *, ledger_path: LedgerPath,
+                            actor: str) -> Callable[[], int]:
+    """Check everything that can be checked without writing to the ledger, and return the one step that writes.
+
+    Every refusal raises here, before any byte is written: the payload's fields and types, the int range and the
+    actor grammar Argus enforces (with Argus's own validators too, when the installed ``argus_ledger`` exports
+    them), a ``ledger_path`` that cannot be opened or created as a regular file, a missing ``argus_ledger``. So a
+    caller can tell a receipt that was never attempted from one whose write began. A failure that appears only
+    once the returned step runs (the path changed in between, a lock, a read or write error) is not one of these:
+    that write may have begun."""
+    record = _check_payload(payload)
+    _check_payload_range(record)
+    path = _check_ledger_path(ledger_path)
+    _check_actor(actor)
     try:
         from argus_ledger import AppendOnlyLedger
     except ImportError as exc:  # pragma: no cover - exercised only without the extra installed
         raise ImportError("writing a harpe.context_built receipt needs argus-ledger (pip install harpe[audit])") from exc
+    try:
+        from argus_ledger import validate_identifiers, validate_payload
+    except ImportError:  # pragma: no cover - an argus-ledger that predates the exported gates
+        pass
+    else:
+        validate_identifiers(CONTEXT_BUILT_EVENT, actor)
+        validate_payload(dict(record))
+    ledger = AppendOnlyLedger(path)
+    _probe_ledger_path(path)
 
     def write() -> int:
-        event = AppendOnlyLedger(path).append(CONTEXT_BUILT_EVENT, actor, record)
+        event = ledger.append(CONTEXT_BUILT_EVENT, actor, record)
         return int(event.sequence)
 
     return write
@@ -333,9 +398,12 @@ class TwoPassBuild:
         """Write this build's one ``harpe.context_built`` receipt to ``ledger_path``; return its sequence. A
         second call raises ``RuntimeError``. The receipt seals the build: later requests raise.
 
-        A refusal that writes nothing (a bad ``ledger_path`` or ``actor``, ``argus_ledger`` not installed) leaves
-        the build open, so the call can be repeated. The build is sealed before the ledger write starts: when the
-        write raises, the receipt may already be in the ledger, so the build stays sealed with no
+        A refusal that writes nothing leaves the build open, so the call can be repeated: a payload or ``actor``
+        the Argus ledger would refuse (an actor with whitespace, an int beyond +/-(2**53 - 1)), a ``ledger_path``
+        that cannot be opened or created as a regular file (a directory, a missing parent that is a file, no write
+        permission), ``argus_ledger`` not installed. All of these are checked before the build is sealed. The
+        build is sealed before the ledger write starts: when the write raises, the receipt may already be in the
+        ledger, so the build stays sealed with no
         ``receipt_sequence``, and later requests and emits raise ``RuntimeError`` rather than change the context
         under that receipt or write a second one."""
         with self._lock:
