@@ -9,7 +9,11 @@ a tier-0 item's tokens is refused and the pinned set and its ``pinned_policy_dig
 Each build emits at most one ``harpe.context_built`` receipt, ints and strings only, written to the Argus ledger
 whose path the caller passes. There is no default path: a caller that does not name a ledger cannot write one.
 Writing the receipt seals the build: a later ``request`` raises, so the context the build hands out is always the
-one its receipt describes. The build keeps its own copies of the items it is given and hands out copies. A copy
+one its receipt describes. The build is sealed before the ledger write starts, not after it returns. An ``emit``
+whose write raises may have left its receipt in the ledger (Argus can fail after the record's bytes are written),
+so the build stays sealed and refuses further requests and a second ``emit``: a crash cannot leave two receipts
+for one build, or a context that differs from a receipt already on disk. The build keeps its own copies of the
+items it is given and hands out copies. A copy
 owns every field the receipt accounts for and the dicts, lists, tuples and sets inside ``metadata``; any other
 object held there (a lock, a client, an open handle) is shared, never cloned.
 
@@ -20,8 +24,10 @@ that includes one, or a description or body marked confidential, is refused when
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
+import stat
 import threading
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
@@ -91,20 +97,100 @@ def _check_ledger_path(ledger_path: Any) -> str:
     return path
 
 
-def append_context_built(payload: Mapping[str, Any], *, ledger_path: LedgerPath, actor: str = "harpe") -> int:
-    """Append one ``harpe.context_built`` event with ``payload`` to the Argus ledger at ``ledger_path``; return
-    its sequence. The payload must carry exactly ``CONTEXT_BUILT_FIELDS``, each an int or a str; nothing is
-    written when it does not."""
-    record = _check_payload(payload)
-    path = _check_ledger_path(ledger_path)
+# The gates Argus applies inside ``append`` before it opens the ledger (argus_ledger.canonical): an actor is
+# printable ASCII without whitespace, quotes or backslashes, at most 256 bytes; a payload int lies within
+# +/-(2**53 - 1). Applied here as well, so that a receipt Argus would refuse is refused before the build is sealed.
+_MAX_ACTOR_BYTES = 256
+_MAX_SAFE_INTEGER = 2 ** 53 - 1
+
+
+def _check_actor(actor: Any) -> str:
     if not isinstance(actor, str) or not actor:
         raise ValueError("actor must be a non-empty str")
+    if (len(actor) > _MAX_ACTOR_BYTES or any(not ("\x21" <= ch <= "\x7e") for ch in actor)
+            or '"' in actor or "\\" in actor):
+        raise ValueError(f"actor {actor!r} must be printable ASCII without whitespace, quotes or backslashes "
+                         f"(1-{_MAX_ACTOR_BYTES} bytes), as the Argus ledger requires")
+    return actor
+
+
+def _check_payload_range(record: Mapping[str, Union[int, str]]) -> None:
+    for key, value in record.items():
+        if type(value) is int and abs(value) > _MAX_SAFE_INTEGER:
+            raise ValueError(f"harpe.context_built field {key!r} is {value}; the Argus ledger takes integers "
+                             f"within +/-{_MAX_SAFE_INTEGER}")
+
+
+def _probe_ledger_path(path: str) -> None:
+    """Refuse a ``path`` whose first ledger syscall would fail, without creating or writing anything.
+
+    The file is opened the way the Argus writer opens it (read-write, append, no create) and closed again. A path
+    that does not exist yet is accepted when its nearest existing ancestor is a directory this process can write
+    in, since Argus then creates the missing directories and the file. A directory, or any other file that is not a
+    regular file, cannot hold a receipt and is refused."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CLOEXEC)
+    except FileNotFoundError:
+        ancestor = os.path.dirname(os.path.abspath(path))
+        while not os.path.lexists(ancestor):
+            ancestor = os.path.dirname(ancestor)
+        if not os.path.isdir(ancestor):
+            raise NotADirectoryError(errno.ENOTDIR, "the ledger's nearest existing ancestor is not a directory",
+                                     ancestor) from None
+        if not os.access(ancestor, os.W_OK | os.X_OK):
+            raise PermissionError(errno.EACCES, "the ledger file cannot be created in", ancestor) from None
+        return
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "the ledger path is not a regular file", path)
+    finally:
+        os.close(fd)
+
+
+def _prepared_context_built(payload: Mapping[str, Any], *, ledger_path: LedgerPath,
+                            actor: str) -> Callable[[], int]:
+    """Check everything that can be checked without writing to the ledger, and return the one step that writes.
+
+    Every refusal raises here, before any byte is written: the payload's fields and types, the int range and the
+    actor grammar Argus enforces (with Argus's own validators too, when the installed ``argus_ledger`` exports
+    them), a ``ledger_path`` that cannot be opened or created as a regular file, a missing ``argus_ledger``. So a
+    caller can tell a receipt that was never attempted from one whose write began. A failure that appears only
+    once the returned step runs (the path changed in between, a lock, a read or write error) is not one of these:
+    that write may have begun."""
+    record = _check_payload(payload)
+    _check_payload_range(record)
+    path = _check_ledger_path(ledger_path)
+    _check_actor(actor)
     try:
         from argus_ledger import AppendOnlyLedger
     except ImportError as exc:  # pragma: no cover - exercised only without the extra installed
         raise ImportError("writing a harpe.context_built receipt needs argus-ledger (pip install harpe[audit])") from exc
-    event = AppendOnlyLedger(path).append(CONTEXT_BUILT_EVENT, actor, record)
-    return int(event.sequence)
+    try:
+        from argus_ledger import validate_identifiers, validate_payload
+    except ImportError:  # pragma: no cover - an argus-ledger that predates the exported gates
+        pass
+    else:
+        validate_identifiers(CONTEXT_BUILT_EVENT, actor)
+        validate_payload(dict(record))
+    ledger = AppendOnlyLedger(path)
+    _probe_ledger_path(path)
+
+    def write() -> int:
+        event = ledger.append(CONTEXT_BUILT_EVENT, actor, record)
+        return int(event.sequence)
+
+    return write
+
+
+def append_context_built(payload: Mapping[str, Any], *, ledger_path: LedgerPath, actor: str = "harpe") -> int:
+    """Append one ``harpe.context_built`` event with ``payload`` to the Argus ledger at ``ledger_path``; return
+    its sequence. The payload must carry exactly ``CONTEXT_BUILT_FIELDS``, each an int or a str; nothing is
+    written when it does not.
+
+    When the append itself raises, the record may already be in the ledger: Argus can fail after the record's
+    bytes are written (a failed fsync whose rollback also fails, a ``close`` that reports EIO after the fsync).
+    Do not take an exception from the append to mean that no receipt exists."""
+    return _prepared_context_built(payload, ledger_path=ledger_path, actor=actor)()
 
 
 class TwoPassBuild:
@@ -202,6 +288,9 @@ class TwoPassBuild:
             it.token_count for it in self._desc.values()
         )
         self._receipt_sequence: Optional[int] = None
+        # Set before the ledger write starts and never cleared: once a write may have reached the ledger, the build
+        # must neither change nor write again, whether or not the write returned a sequence.
+        self._sealed = False
         self._lock = threading.Lock()  # a request cannot land between the receipt's payload and its write
 
     def _counted(self, item: ContextItem) -> ContextItem:
@@ -226,9 +315,9 @@ class TwoPassBuild:
         An id that is not in this build raises ``KeyError``. Once the receipt is written (:meth:`emit`) the build is
         sealed and every request raises ``RuntimeError``: the context may not change under its receipt."""
         with self._lock:
-            if self._receipt_sequence is not None:
-                raise RuntimeError(f"this build's receipt is already at sequence {self._receipt_sequence}; "
-                                   "a request after emit() cannot change the context it describes")
+            if self._sealed:
+                raise RuntimeError(f"{self._seal_reason()}; a request after emit() cannot change the context it "
+                                   "describes")
             if item_id in self._tier0 or item_id in self._expanded:
                 return True
             if item_id not in self._desc:
@@ -299,16 +388,38 @@ class TwoPassBuild:
             "dropped_ids_sha256": dropped_ids_sha256(self._dropped),
         }
 
+    def _seal_reason(self) -> str:
+        if self._receipt_sequence is not None:
+            return f"this build's receipt is already at sequence {self._receipt_sequence}"
+        return ("an earlier emit() of this build failed while writing its receipt, which may be in the ledger; "
+                "the build stays sealed (make a new build to write another receipt)")
+
     def emit(self, *, ledger_path: LedgerPath, actor: str = "harpe") -> int:
         """Write this build's one ``harpe.context_built`` receipt to ``ledger_path``; return its sequence. A
-        second call raises ``RuntimeError``. The receipt seals the build: later requests raise."""
+        second call raises ``RuntimeError``. The receipt seals the build: later requests raise.
+
+        A refusal that writes nothing leaves the build open, so the call can be repeated: a payload or ``actor``
+        the Argus ledger would refuse (an actor with whitespace, an int beyond +/-(2**53 - 1)), a ``ledger_path``
+        that cannot be opened or created as a regular file (a directory, a missing parent that is a file, no write
+        permission), ``argus_ledger`` not installed. All of these are checked before the build is sealed. The
+        build is sealed before the ledger write starts: when the write raises, the receipt may already be in the
+        ledger, so the build stays sealed with no
+        ``receipt_sequence``, and later requests and emits raise ``RuntimeError`` rather than change the context
+        under that receipt or write a second one."""
         with self._lock:
-            if self._receipt_sequence is not None:
-                raise RuntimeError(f"this build's receipt is already at sequence {self._receipt_sequence}")
-            self._receipt_sequence = append_context_built(self.receipt_payload(), ledger_path=ledger_path,
-                                                          actor=actor)
+            if self._sealed:
+                raise RuntimeError(self._seal_reason())
+            write = _prepared_context_built(self.receipt_payload(), ledger_path=ledger_path, actor=actor)
+            self._sealed = True  # before the first byte: a write that raises may still have left the receipt
+            self._receipt_sequence = write()
             return self._receipt_sequence
 
     @property
+    def sealed(self) -> bool:
+        """True once :meth:`emit` has started writing the receipt, whether or not the write returned."""
+        return self._sealed
+
+    @property
     def receipt_sequence(self) -> Optional[int]:
+        """The receipt's ledger sequence; None before :meth:`emit`, and after an ``emit`` whose write raised."""
         return self._receipt_sequence
